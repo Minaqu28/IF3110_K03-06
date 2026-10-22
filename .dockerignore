@@ -1,0 +1,8 @@
+.git
+.env
+*.test
+server
+server.exe
+coverage.out
+.gocache
+.test-pg
