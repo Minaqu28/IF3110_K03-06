@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="id">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>Login</title>
+        <link rel="stylesheet" href="/static/style.css">
+    </head>
+    <body>
+        <img class="login-gif" src="/static/aqua.gif" alt="Animasi login">
+        <main class="card">
+            <h1>Larp Larp</h1>
+            {{if .Message}}
+                <p class="error" role="alert">{{.Message}}</p>
+            {{end}}
+            <form method="post" action="/login">
+                <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+                <label>Username
+                    <input name="username" autocomplete="username" required>
+                </label>
+                <label>Password
+                    <input type="password" name="password" autocomplete="current-password" required>
+                </label>
+                <button type="submit">Masuk</button>
+            </form>
+        </main>
+    </body>
+</html>
