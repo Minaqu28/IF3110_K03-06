@@ -20,5 +20,20 @@ type SessionState struct {
 }
 
 func Decide(s SessionState, now time.Time) Verdict {
-
+	switch {
+	case s.Revoked, !s.UserActive:
+		return Reject
+	case !now.Before(s.AbsoluteExpiresAt):
+		return Reject
+	case now.Sub(s.LastSeenAt) > IdleTimeout:
+		return Reject
+	case s.MatchedPrevious:
+		if now.Sub(s.RotatedAt) > PreviousGrace {
+			return Reject
+		}
+		return Accept
+	case now.Sub(s.RotatedAt) >= RotationInterval:
+		return AcceptAndRotate
+	}
+	return Accept
 }

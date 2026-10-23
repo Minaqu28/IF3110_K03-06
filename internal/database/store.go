@@ -90,17 +90,16 @@ func (this *Store) ValidateSession(ctx context.Context, hash, replacementHash []
 		return authentication.Session{}, false, err
 	}
 	return authentication.Session{
-		ID:   sessionID,
-		User: user,
+		ID:        sessionID,
+		User:      user,
 		CSRFToken: csrf,
-		Previous: state.MatchedPrevious
+		Previous:  state.MatchedPrevious,
 	}, rotated, nil
 }
 func (this *Store) RevokeSession(ctx context.Context, hash []byte, now time.Time) error {
-	_, err := this.db.ExecContext(ctx, 
-	`UPDATE sessions SET revoked_at = $2
+	_, err := this.db.ExecContext(ctx,
+		`UPDATE sessions SET revoked_at = $2
 	WHERE (identifier_hash = $1 OR previous_hash = $1) AND revoked_at IS NULL`,
-	hash, now
-	)
+		hash, now)
 	return err
 }
