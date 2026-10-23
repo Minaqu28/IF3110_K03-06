@@ -127,12 +127,12 @@ func (this *AdminService) CreateConnection(ctx context.Context, actor domain.Use
 	if c.Name == "" {
 		return domain.Connection{}, ErrInvalidInput
 	}
-	c.Db_name = strings.TrimSpace(c.Db_name)
-	if c.Db_name == "" {
+	c.DBname = strings.TrimSpace(c.DBname)
+	if c.DBname == "" {
 		return domain.Connection{}, ErrInvalidInput
 	}
-	c.Db_user = strings.TrimSpace(c.Db_user)
-	if c.Db_user == "" {
+	c.DBuser = strings.TrimSpace(c.DBuser)
+	if c.DBuser == "" {
 		return domain.Connection{}, ErrInvalidInput
 	}
 	if c.Host == "" {

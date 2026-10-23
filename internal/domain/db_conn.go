@@ -5,7 +5,7 @@ type Connection struct {
 	Name    string
 	Host    string
 	Port    int64
-	Db_name string
-	Db_user string
+	DBname  string
+	DBuser  string
 	SSLMode string
 }
