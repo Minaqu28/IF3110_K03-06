@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	IdleTimeout = 30 * time.Minute
+	IdleTimeout      = 30 * time.Minute
 	AbsoluteLifetime = 12 * time.Hour
 	RotationInterval = 15 * time.Minute
-	PreviousGrace = 30 * time.Second
+	PreviousGrace    = 30 * time.Second
 )
 
 var ErrInvalidCredentials = errors.New("invalid credentials")
