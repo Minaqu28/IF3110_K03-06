@@ -42,3 +42,23 @@ nav{margin-bottom:1rem}
 .inline-form{display:flex;gap:.4rem;align-items:center;margin:.25rem 0}
 .inline-form label{margin:0;white-space:nowrap}
 td details{min-width:12rem}
+
+.meta{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem}
+.meta dt{font-weight:600}
+.meta dd{margin:0}
+.explorer{display:grid;grid-template-columns:minmax(14rem,18rem) 1fr;gap:1.5rem;align-items:start}
+.explorer-main{min-width:0}
+.explorer .panel{margin:0 0 1.5rem}
+.table-list tr.selected{background:#eef3fb}
+.explorer textarea{display:block;width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:.9rem;padding:.6rem}
+.result-scroll{overflow:auto;max-height:28rem}
+table.result td,table.result th{font-family:ui-monospace,monospace;font-size:.85rem;white-space:pre;vertical-align:top}
+.null{color:#8a94a6;font-style:italic}
+.statement{margin-bottom:1rem}
+.status{color:#1b6b3a;font-weight:600}
+pre.error{white-space:pre-wrap;background:#fdf1f2;padding:.6rem}
+.status-SUCCESS{color:#1b6b3a;font-weight:600}
+.status-FAILED{color:#9c1726;font-weight:600}
+.status-DRAFT{color:#7a5a00;font-weight:600}
+.op-list pre,td pre{margin:.25rem 0;white-space:pre-wrap;background:#f4f6fa;padding:.4rem}
+@media (max-width:48rem){.explorer{grid-template-columns:1fr}}

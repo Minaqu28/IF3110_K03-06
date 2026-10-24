@@ -21,10 +21,10 @@ func NewRouter(pages *template.Template, static fs.FS) http.Handler {
 
 // NewAuthenticatedRouter wires the authentication handler when a session store is ready.
 func NewAuthenticatedRouter(authenticationHandler *AuthenticationHandler, static fs.FS, health func(context.Context) error) http.Handler {
-	return NewApplicationRouter(authenticationHandler, nil, static, health)
+	return NewApplicationRouter(authenticationHandler, nil, nil, static, health)
 }
 
-func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, static fs.FS, health func(context.Context) error) http.Handler {
+func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, static fs.FS, health func(context.Context) error) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler(health))
 	mux.HandleFunc("GET /{$}", authenticationHandler.Home)
@@ -48,7 +48,14 @@ func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHan
 		mux.HandleFunc("POST /admin/connections/delete", adminHandler.DeleteConnection)
 		mux.HandleFunc("POST /admin/grants", adminHandler.Grant)
 		mux.HandleFunc("GET /databases", adminHandler.ListDatabases)
-		mux.HandleFunc("GET /databases/{id}", adminHandler.Database)
+	}
+	if databaseHandler != nil {
+		mux.HandleFunc("GET /databases/{id}", databaseHandler.Show)
+		mux.HandleFunc("POST /databases/{id}/query", databaseHandler.Execute)
+		mux.HandleFunc("POST /databases/{id}/migrations/preview", databaseHandler.PreviewMigration)
+		mux.HandleFunc("POST /databases/{id}/migrations", databaseHandler.CreateMigration)
+		mux.HandleFunc("POST /databases/{id}/migrations/{version}/update", databaseHandler.UpdateMigration)
+		mux.HandleFunc("POST /databases/{id}/migrations/{version}/execute", databaseHandler.ExecuteMigration)
 	}
 	if static != nil {
 		mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))

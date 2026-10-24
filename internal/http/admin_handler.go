@@ -321,28 +321,6 @@ func (h *AdminHandler) ListDatabases(w http.ResponseWriter, r *http.Request) {
 	}{session, connections})
 }
 
-func (h *AdminHandler) Database(w http.ResponseWriter, r *http.Request) {
-	session, ok := h.auth.requireSession(w, r)
-	if !ok {
-		return
-	}
-	id, err := positiveID(r.PathValue("id"))
-	if err != nil {
-		http.Error(w, "invalid database ID", http.StatusBadRequest)
-		return
-	}
-	connection, level, err := h.service.ConnectionWithAccess(r.Context(), session.User, id)
-	if err != nil {
-		adminHTTPError(w, err)
-		return
-	}
-	renderPage(w, h.pages, "database.html", struct {
-		Session    authentication.Session
-		Connection domain.Connection
-		Level      authorization.AccessLevel
-	}{session, connection, level})
-}
-
 func positiveID(raw string) (int64, error) {
 	id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 	if err != nil || id <= 0 {
@@ -375,11 +353,16 @@ func adminHTTPError(w http.ResponseWriter, err error) {
 }
 
 func renderPage(w http.ResponseWriter, pages *template.Template, name string, data any) {
+	renderPageStatus(w, pages, name, data, http.StatusOK)
+}
+
+func renderPageStatus(w http.ResponseWriter, pages *template.Template, name string, data any, status int) {
 	var body bytes.Buffer
 	if err := pages.ExecuteTemplate(&body, name, data); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	_, _ = body.WriteTo(w)
 }

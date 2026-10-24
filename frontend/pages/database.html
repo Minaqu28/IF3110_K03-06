@@ -1,9 +1,190 @@
 <!doctype html>
 <html lang="id">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Detail Database</title><link rel="stylesheet" href="/static/style.css"></head>
-<body><main class="card">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{.Connection.Name}} · Database</title><link rel="stylesheet" href="/static/style.css"></head>
+<body><main class="admin-layout">
     <nav><a href="/databases">Database saya</a></nav>
     <h1>{{.Connection.Name}}</h1>
-    <dl><dt>Database</dt><dd>{{.Connection.DBname}}</dd><dt>Host</dt><dd>{{.Connection.Host}}:{{.Connection.Port}}</dd><dt>Izin</dt><dd>{{.Level}}</dd></dl>
+    <dl class="meta"><dt>Database</dt><dd>{{.Connection.DBname}}</dd><dt>Host</dt><dd>{{.Connection.Host}}:{{.Connection.Port}}</dd><dt>Izin</dt><dd>{{.Level}}</dd></dl>
+    {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+
+    <div class="explorer">
+        <section class="panel table-list">
+            <h2>Tabel (public)</h2>
+            {{if .Tables}}
+            <table>
+                <thead><tr><th>Nama</th><th>Baris</th></tr></thead>
+                <tbody>
+                {{range .Tables}}
+                <tr{{if eq .Name $.Table}} class="selected"{{end}}>
+                    <td><a href="/databases/{{$.Connection.ID}}?table={{.Name}}">{{.Name}}</a>{{if ne .Type "BASE TABLE"}} <small>({{.Type}})</small>{{end}}</td>
+                    <td>{{if lt .Rows 0}}?{{else}}{{.Rows}}{{end}}</td>
+                </tr>
+                {{end}}
+                </tbody>
+            </table>
+            {{else}}<p>Tidak ada tabel.</p>{{end}}
+        </section>
+
+        <div class="explorer-main">
+            {{with .Preview}}
+            <section class="panel">
+                <h2>{{$.Table}} <small>(maks. 50 baris)</small></h2>
+                {{template "result-table" .}}
+            </section>
+            {{end}}
+
+            {{if eq .Level "VIEW_EDIT"}}
+            <section class="panel">
+                <h2>SQL Editor</h2>
+                <form method="post" action="/databases/{{.Connection.ID}}/query">
+                    <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
+                    <textarea name="sql" rows="6" spellcheck="false" required placeholder="SELECT * FROM ...;">{{.SQL}}</textarea>
+                    <p><button type="submit">Jalankan</button> <small>Skrip multi-statement dijalankan dalam satu transaksi. Perubahan dicatat di log perubahan database.</small></p>
+                </form>
+            </section>
+
+            <section class="panel">
+                {{if and .SelectedMigration (ne .SelectedMigration.Status "SUCCESS")}}
+                <h2>Ubah Migrasi v{{.SelectedMigration.Version}} ({{.SelectedMigration.Status}})</h2>
+                <form method="post" action="/databases/{{.Connection.ID}}/migrations/{{.SelectedMigration.Version}}/update">
+                    <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
+                    <input type="hidden" name="version" value="{{.SelectedMigration.Version}}">
+                    <label>Judul Migrasi <input name="title" value="{{.MigrationTitle}}" placeholder="Deskripsi singkat migrasi"></label>
+                    <label>SQL Migrasi</label>
+                    <textarea name="migration_sql" rows="8" spellcheck="false" required placeholder="CREATE TABLE ...; INSERT INTO ...;">{{.MigrationSQL}}</textarea>
+                    <p>
+                        <button type="submit">Simpan Perubahan</button>
+                        <button type="submit" formaction="/databases/{{.Connection.ID}}/migrations/preview">Preview Operasi SQL</button>
+                        <a href="/databases/{{.Connection.ID}}">Buat migrasi baru</a>
+                    </p>
+                </form>
+                <form method="post" action="/databases/{{.Connection.ID}}/migrations/{{.SelectedMigration.Version}}/execute" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
+                    <button type="submit">Eksekusi Migrasi v{{.SelectedMigration.Version}} (Transaksi)</button>
+                    <small>Dijalankan dalam transaksi: COMMIT jika berhasil, ROLLBACK jika gagal.</small>
+                </form>
+                {{else}}
+                <h2>Buat &amp; Preview Migrasi Baru</h2>
+                <form method="post" action="/databases/{{.Connection.ID}}/migrations">
+                    <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
+                    <label>Judul Migrasi <input name="title" value="{{.MigrationTitle}}" placeholder="Deskripsi singkat migrasi"></label>
+                    <label>SQL Migrasi</label>
+                    <textarea name="migration_sql" rows="8" spellcheck="false" required placeholder="CREATE TABLE ...; ALTER TABLE ...;">{{.MigrationSQL}}</textarea>
+                    <p>
+                        <button type="submit">Simpan Draft Migrasi</button>
+                        <button type="submit" formaction="/databases/{{.Connection.ID}}/migrations/preview">Preview Operasi SQL</button>
+                    </p>
+                </form>
+                {{end}}
+            </section>
+            {{end}}
+
+            {{if .PreviewOps}}
+            <section class="panel">
+                <h2>Preview Operasi SQL ({{len .PreviewOps}} statement)</h2>
+                <p><small>Operasi SQL berikut akan dieksekusi secara berurutan di dalam satu transaksi (COMMIT jika semua sukses, ROLLBACK jika ada yang gagal):</small></p>
+                <ol class="op-list">
+                    {{range .PreviewOps}}<li><pre><code>{{.}}</code></pre></li>{{end}}
+                </ol>
+            </section>
+            {{end}}
+
+            {{with .SelectedMigration}}
+            <section class="panel">
+                <h2>Detail Migrasi v{{.Version}}</h2>
+                <dl class="meta">
+                    <dt>Versi</dt><dd>v{{.Version}}</dd>
+                    <dt>Judul</dt><dd>{{.Title}}</dd>
+                    <dt>Status</dt><dd class="status-{{.Status}}">{{.Status}}</dd>
+                    <dt>Waktu Eksekusi</dt><dd>{{if eq .Status "DRAFT"}}-{{else}}{{.DurationMs}} ms{{end}}</dd>
+                    <dt>Dibuat Oleh</dt><dd>{{if .CreatedBy}}{{.CreatedBy}}{{else}}-{{end}} ({{.CreatedAt.Format "2006-01-02 15:04:05"}})</dd>
+                    <dt>Dieksekusi Oleh</dt><dd>{{if .ExecutedBy}}{{.ExecutedBy}} ({{.ExecutedAt.Format "2006-01-02 15:04:05"}}){{else}}-{{end}}</dd>
+                </dl>
+                <h3>SQL Migrasi</h3>
+                <pre><code>{{.SQL}}</code></pre>
+                {{if .Error}}<h3>Error</h3><pre class="error">{{.Error}}</pre>{{end}}
+            </section>
+            {{end}}
+
+            {{if .Results}}
+            <section class="panel">
+                <h2>Hasil</h2>
+                {{range $i, $r := .Results}}
+                <div class="statement">
+                    {{if $r.Error}}<pre class="error">{{$r.Error}}</pre>
+                    {{else}}<p class="status">✔ {{if $r.Command}}{{$r.Command}}{{else}}OK{{end}}</p>
+                    {{if $r.Columns}}{{template "result-table" $r}}{{end}}{{end}}
+                </div>
+                {{end}}
+            </section>
+            {{end}}
+
+            {{if .History}}
+            <section class="panel">
+                <h2>Riwayat migrasi</h2>
+                <table>
+                    <thead><tr><th>Versi</th><th>Judul &amp; SQL</th><th>Status</th><th>Durasi</th><th>Oleh</th><th>Waktu</th><th>Detail</th></tr></thead>
+                    <tbody>
+                    {{range .History}}
+                    <tr>
+                        <td>v{{.Version}}</td>
+                        <td>
+                            <strong>{{.Title}}</strong>
+                            <details><summary>Lihat SQL</summary><pre><code>{{.SQL}}</code></pre></details>
+                            {{if .Error}}<details><summary>error</summary><pre class="error">{{.Error}}</pre></details>{{end}}
+                        </td>
+                        <td class="status-{{.Status}}">{{.Status}}</td>
+                        <td>{{if eq .Status "DRAFT"}}-{{else}}{{.DurationMs}} ms{{end}}</td>
+                        <td>{{if .ExecutedBy}}{{.ExecutedBy}}{{else}}{{.CreatedBy}}{{end}}</td>
+                        <td>{{.ExecutedAt.Format "2006-01-02 15:04:05"}}</td>
+                        <td><a href="/databases/{{$.Connection.ID}}?migration={{.Version}}">Detail</a></td>
+                    </tr>
+                    {{end}}
+                    </tbody>
+                </table>
+            </section>
+            {{end}}
+
+            {{if .Changes}}
+            <section class="panel">
+                <h2>Log Perubahan Database</h2>
+                <table>
+                    <thead><tr><th>Waktu</th><th>Sumber</th><th>Versi</th><th>SQL</th><th>Status</th><th>Durasi</th><th>Oleh</th></tr></thead>
+                    <tbody>
+                    {{range .Changes}}
+                    <tr>
+                        <td>{{.CreatedAt.Format "2006-01-02 15:04:05"}}</td>
+                        <td>{{.Source}}</td>
+                        <td>{{if gt .MigrationVersion 0}}v{{.MigrationVersion}}{{else}}-{{end}}</td>
+                        <td>
+                            <pre><code>{{.SQL}}</code></pre>
+                            {{if .Error}}<details><summary>error</summary><pre class="error">{{.Error}}</pre></details>{{end}}
+                        </td>
+                        <td class="status-{{.Status}}">{{.Status}}</td>
+                        <td>{{.DurationMs}} ms</td>
+                        <td>{{.Username}}</td>
+                    </tr>
+                    {{end}}
+                    </tbody>
+                </table>
+            </section>
+            {{end}}
+        </div>
+    </div>
 </main></body>
 </html>
+
+{{define "result-table"}}
+{{if .Columns}}
+<div class="result-scroll">
+<table class="result">
+    <thead><tr>{{range .Columns}}<th>{{.}}</th>{{end}}</tr></thead>
+    <tbody>
+    {{range .Rows}}<tr>{{range .}}<td>{{if .Null}}<span class="null">NULL</span>{{else}}{{.Value}}{{end}}</td>{{end}}</tr>
+    {{else}}<tr><td colspan="{{len .Columns}}">(tidak ada baris)</td></tr>{{end}}
+    </tbody>
+</table>
+</div>
+{{if .Truncated}}<p><small>Hasil dipotong; hanya {{len .Rows}} baris pertama yang ditampilkan.</small></p>{{end}}
+{{end}}
+{{end}}

@@ -16,6 +16,7 @@ import (
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/authentication"
 	"github.com/Minaqu28/IF3110_K03-06/internal/database"
+	"github.com/Minaqu28/IF3110_K03-06/internal/explorer"
 	"github.com/Minaqu28/IF3110_K03-06/internal/http"
 	"github.com/Minaqu28/IF3110_K03-06/internal/migration"
 )
@@ -64,6 +65,7 @@ func run() error {
 		return err
 	}
 	adminHandler := httpserver.NewAdminHandler(adminService, authHandler, pages)
+	databaseHandler := httpserver.NewDatabaseHandler(explorer.NewService(adminService, adminStore), authHandler, pages)
 
 	addr := os.Getenv("HTTP_ADDR")
 	if addr == "" {
@@ -71,7 +73,7 @@ func run() error {
 	}
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpserver.NewApplicationRouter(authHandler, adminHandler, static, db.PingContext),
+		Handler:           httpserver.NewApplicationRouter(authHandler, adminHandler, databaseHandler, static, db.PingContext),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
