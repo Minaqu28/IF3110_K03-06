@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="id">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Database Saya</title><link rel="stylesheet" href="/static/style.css"></head>
+<body><main class="admin-layout">
+    <nav><a href="/dashboard">Dashboard</a></nav>
+    <h1>Database saya</h1>
+    {{if .Connections}}<ul>{{range .Connections}}<li><a href="/databases/{{.ID}}">{{.Name}}</a> ({{.DBname}})</li>{{end}}</ul>{{else}}<p>Belum ada database yang dapat Anda akses.</p>{{end}}
+</main></body>
+</html>

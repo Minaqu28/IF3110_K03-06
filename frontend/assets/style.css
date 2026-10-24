@@ -20,3 +20,25 @@ label{
     font-weight:600}
 
 .error{color:#9c1726}
+
+.card,.panel{
+    background:#fff;
+    border:1px solid #dce2eb;
+    padding:1.5rem;
+    box-shadow:0 3px 12px #1720330d}
+    
+.card{width:min(90vw,28rem)}
+.admin-layout{width:min(94vw,70rem);margin:2rem auto}
+.admin-layout h1{margin:1.5rem 0}
+.panel{margin:1.5rem 0;overflow-x:auto}
+.form-grid{display:flex;flex-wrap:wrap;align-items:end;gap:.75rem}
+.form-grid label{margin:0;min-width:10rem;flex:1}
+.form-grid input,.form-grid select{display:block;width:100%;box-sizing:border-box;padding:.5rem;margin-top:.35rem}
+.form-grid input[type=checkbox]{display:inline;width:auto}
+button{padding:.55rem .8rem;cursor:pointer}
+table{width:100%;border-collapse:collapse;margin-top:1rem}
+th,td{text-align:left;padding:.5rem;border-bottom:1px solid #e2e7ef}
+nav{margin-bottom:1rem}
+.inline-form{display:flex;gap:.4rem;align-items:center;margin:.25rem 0}
+.inline-form label{margin:0;white-space:nowrap}
+td details{min-width:12rem}

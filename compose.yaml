@@ -4,55 +4,27 @@ services:
       context: .
     env_file:
       - .env
+    environment:
+      DATABASE_URL: "postgres://platform:${PLATFORM_DB_PASSWORD:?Set PLATFORM_DB_PASSWORD in .env}@platform-db:5432/platform?sslmode=disable"
     ports:
       - "${APP_HOST_PORT:-8080}:8080"
-# environment:
-#       HTTP_ADDR: ":8080"
-#       DATABASE_URL: "postgres://platform:${PLATFORM_DB_PASSWORD}@platform-db:5432/platform?sslmode=disable"
-#       ADMIN_USERNAME: "${ADMIN_USERNAME}"
-#       ADMIN_PASSWORD: "${ADMIN_PASSWORD}"
-#       # Kunci untuk mengenkripsi password koneksi target database (base64, 32 byte)
-#       CONNECTION_SECRET_KEY: "${CONNECTION_SECRET_KEY}"
-#       COOKIE_SECURE: "${COOKIE_SECURE:-false}"
-#     depends_on:
-#       platform-db:
-#         condition: service_healthy
-#       target-db:
-#         condition: service_healthy
+    depends_on:
+      platform-db:
+        condition: service_healthy
 
-#   Database milik platform: user, group, session, koneksi, riwayat migration
-#   platform-db:
-#     image: postgres:17-alpine
-#     environment:
-#       POSTGRES_USER: platform
-#       POSTGRES_PASSWORD: "${PLATFORM_DB_PASSWORD}"
-#       POSTGRES_DB: platform
-#     volumes:
-#       - platform-db-data:/var/lib/postgresql/data
-#     healthcheck:
-#       test: ["CMD-SHELL", "pg_isready -U platform -d platform"]
-#       interval: 5s
-#       timeout: 3s
-#       retries: 10
+  platform-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: "${PLATFORM_DB_PASSWORD:?Set PLATFORM_DB_PASSWORD in .env}"
+      POSTGRES_DB: platform
+    volumes:
+      - platform-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
-# Database target contoh yang dikelola lewat platform (untuk demo viewer & migration)
-# target-db:
-#   image: postgres:17-alpine
-#   environment:
-#     POSTGRES_USER: demo
-#     POSTGRES_PASSWORD: "${TARGET_DB_PASSWORD}"
-#     POSTGRES_DB: demo
-#   volumes:
-#     - target-db-data:/var/lib/postgresql/data
-#     - ./db/target/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-#   ports:
-#     - "${TARGET_DB_HOST_PORT:-5433}:5432"
-#   healthcheck:
-#     test: ["CMD-SHELL", "pg_isready -U demo -d demo"]
-#     interval: 5s
-#     timeout: 3s
-#     retries: 10
-
-# volumes:
-#   platform-db-data:
-#   target-db-data:
+volumes:
+  platform-db-data:

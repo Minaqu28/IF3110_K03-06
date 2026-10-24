@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="id">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>Dashboard</title>
+        <link rel="stylesheet" href="/static/style.css">
+    </head>
+    <body>
+        <main class="card">
+            <h1>Dashboard</h1>
+            <p>Halo, {{.User.Username}}.</p>
+            <p><a href="/databases">Database saya</a>{{if .User.IsPlatformAdmin}} · <a href="/admin">Administrasi Platform</a>{{end}}</p>
+            <form method="post" action="/logout">
+                <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+                <button type="submit">Keluar</button>
+            </form>
+        </main>
+    </body>
+</html>

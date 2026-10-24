@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="id">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Detail Database</title><link rel="stylesheet" href="/static/style.css"></head>
+<body><main class="card">
+    <nav><a href="/databases">Database saya</a></nav>
+    <h1>{{.Connection.Name}}</h1>
+    <dl><dt>Database</dt><dd>{{.Connection.DBname}}</dd><dt>Host</dt><dd>{{.Connection.Host}}:{{.Connection.Port}}</dd><dt>Izin</dt><dd>{{.Level}}</dd></dl>
+</main></body>
+</html>
