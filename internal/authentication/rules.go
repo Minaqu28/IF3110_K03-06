@@ -11,12 +11,13 @@ const (
 )
 
 type SessionState struct {
-	Revoked           bool
-	UserActive        bool
-	MatchedPrevious   bool // the presented identifier is the pre-rotation one
-	RotatedAt         time.Time
-	LastSeenAt        time.Time
-	AbsoluteExpiresAt time.Time
+	Revoked            bool
+	UserActive         bool
+	MatchedPrevious    bool // the presented identifier is the pre-rotation one
+	RotatedAt          time.Time
+	PreviousValidUntil time.Time
+	LastSeenAt         time.Time
+	AbsoluteExpiresAt  time.Time
 }
 
 func Decide(s SessionState, now time.Time) Verdict {
@@ -28,7 +29,7 @@ func Decide(s SessionState, now time.Time) Verdict {
 	case now.Sub(s.LastSeenAt) > IdleTimeout:
 		return Reject
 	case s.MatchedPrevious:
-		if now.Sub(s.RotatedAt) > PreviousGrace {
+		if s.PreviousValidUntil.IsZero() || !now.Before(s.PreviousValidUntil) {
 			return Reject
 		}
 		return Accept

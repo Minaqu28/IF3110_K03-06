@@ -49,19 +49,20 @@ func (this *PostgresStore) ValidateSession(ctx context.Context, hash, replacemen
 	var (
 		sessionID, csrf string
 		currentHash     []byte
+		previousUntil   sql.NullTime
 		state           authentication.SessionState
 		user            domain.User
 	)
 	err = tx.QueryRowContext(ctx, `
 		SELECT s.id, s.csrf_token, s.identifier_hash,
-		       s.rotated_at, s.last_seen_at, s.absolute_expires_at, s.revoked_at IS NOT NULL,
+		       s.rotated_at, s.previous_valid_until, s.last_seen_at, s.absolute_expires_at, s.revoked_at IS NOT NULL,
 		       u.id, u.username, u.password_hash, u.is_platform_admin, u.is_active
 		FROM sessions s
 		JOIN users u ON u.id = s.user_id
 		WHERE s.identifier_hash = $1 OR s.previous_hash = $1
 		FOR UPDATE OF s`, hash,
 	).Scan(&sessionID, &csrf, &currentHash,
-		&state.RotatedAt, &state.LastSeenAt, &state.AbsoluteExpiresAt, &state.Revoked,
+		&state.RotatedAt, &previousUntil, &state.LastSeenAt, &state.AbsoluteExpiresAt, &state.Revoked,
 		&user.ID, &user.Username, &user.PasswordHash, &user.IsPlatformAdmin, &user.IsActive)
 	if errors.Is(err, sql.ErrNoRows) {
 		return authentication.Session{}, false, authentication.ErrUnauthenticated
@@ -71,6 +72,9 @@ func (this *PostgresStore) ValidateSession(ctx context.Context, hash, replacemen
 	}
 	state.UserActive = user.IsActive
 	state.MatchedPrevious = !bytes.Equal(currentHash, hash)
+	if previousUntil.Valid {
+		state.PreviousValidUntil = previousUntil.Time
+	}
 	var rotated bool
 	switch authentication.Decide(state, now) {
 	case authentication.Reject:
@@ -79,12 +83,18 @@ func (this *PostgresStore) ValidateSession(ctx context.Context, hash, replacemen
 		rotated = true
 		_, err = tx.ExecContext(ctx, `
 			UPDATE sessions
-			SET previous_hash = identifier_hash, identifier_hash = $2, rotated_at = $3, last_seen_at = $3
-			WHERE id = $1`, sessionID, replacementHash, now)
+			SET previous_hash = identifier_hash, identifier_hash = $2,
+			    previous_valid_until = LEAST($4, absolute_expires_at),
+			    rotated_at = $3, last_seen_at = GREATEST(last_seen_at, $3)
+			WHERE id = $1`, sessionID, replacementHash, now, now.Add(authentication.PreviousGrace))
 	default:
-		_, err = tx.ExecContext(ctx,
-			`UPDATE sessions SET last_seen_at = $2 WHERE id = $1`,
-			sessionID, now)
+		if !state.MatchedPrevious {
+			_, err = tx.ExecContext(ctx, `
+				UPDATE sessions SET last_seen_at = GREATEST(last_seen_at, $2),
+				    previous_hash = CASE WHEN previous_valid_until <= $2 THEN NULL ELSE previous_hash END,
+				    previous_valid_until = CASE WHEN previous_valid_until <= $2 THEN NULL ELSE previous_valid_until END
+				WHERE id = $1`, sessionID, now)
+		}
 	}
 	if err != nil {
 		return authentication.Session{}, false, err
@@ -93,6 +103,7 @@ func (this *PostgresStore) ValidateSession(ctx context.Context, hash, replacemen
 	if err != nil {
 		return authentication.Session{}, false, err
 	}
+	user.PasswordHash = ""
 	return authentication.Session{
 		ID:        sessionID,
 		User:      user,
@@ -103,7 +114,8 @@ func (this *PostgresStore) ValidateSession(ctx context.Context, hash, replacemen
 func (this *PostgresStore) RevokeSession(ctx context.Context, hash []byte, now time.Time) error {
 	_, err := this.db.ExecContext(ctx,
 		`UPDATE sessions SET revoked_at = $2
-	WHERE (identifier_hash = $1 OR previous_hash = $1) AND revoked_at IS NULL`,
+	WHERE (identifier_hash = $1 OR (previous_hash = $1 AND previous_valid_until > $2))
+	  AND revoked_at IS NULL`,
 		hash, now)
 	return err
 }

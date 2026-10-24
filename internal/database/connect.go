@@ -1,20 +1,25 @@
 package database
 
 import (
-	""
 	"context"
 	"database/sql"
 	"fmt"
 	"io/fs"
 	"sort"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 func Open(ctx context.Context, url string) (*sql.DB, error) {
-	db, err := sql.Open("postgres", url)
+	config, err := pgx.ParseConfig(url)
 	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
+		return nil, fmt.Errorf("invalid database configuration: %w", err)
 	}
+
+	config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+	db := stdlib.OpenDB(*config)
 	db.SetMaxOpenConns(10)
 	db.SetConnMaxLifetime(30 * time.Minute)
 
@@ -62,7 +67,7 @@ func Migrate(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 }
 
 func applyMigration(ctx context.Context, db *sql.DB, fsys fs.FS, name string) error {
-	tx, err := db.BeginTx()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
