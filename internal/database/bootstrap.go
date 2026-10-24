@@ -9,7 +9,6 @@ import (
 	"github.com/Minaqu28/IF3110_K03-06/internal/authentication"
 )
 
-// BootstrapAdmin creates the first platform account if it does not exist.
 func BootstrapAdmin(ctx context.Context, db *sql.DB, username, password string) error {
 	username = strings.TrimSpace(username)
 	if username == "" || password == "" {

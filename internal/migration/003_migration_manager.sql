@@ -1,5 +1,3 @@
--- Migration manager: execution time on migrations and a log of every change
--- executed against a managed database (migrations and SQL editor mutations).
 ALTER TABLE migrations ADD COLUMN duration_ms BIGINT;
 ALTER TABLE migrations ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
@@ -20,7 +18,6 @@ CREATE TABLE database_change_log (
 );
 CREATE INDEX database_change_log_database_idx ON database_change_log (database_id, created_at DESC);
 
--- Earlier versions recorded SQL editor mutations directly as migrations.
 INSERT INTO database_change_log (database_id, migration_id, migration_version, user_id, source, sql, status, error_message, created_at)
 SELECT database_id, id, version, executed_by, 'SQL_EDITOR', sql, status, error_message, executed_at
 FROM migrations WHERE status <> 'DRAFT';

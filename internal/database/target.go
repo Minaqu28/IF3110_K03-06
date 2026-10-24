@@ -29,8 +29,6 @@ var (
 	_ explorer.TransactionalTarget = (*pgTarget)(nil)
 )
 
-// TargetDSN builds a postgres:// URL for a managed connection. Credentials and
-// database name are URL-escaped so passwords containing '@', '/', ':' etc. work.
 func TargetDSN(c domain.Connection, password string) string {
 	u := url.URL{
 		Scheme:   "postgres",
@@ -42,9 +40,6 @@ func TargetDSN(c domain.Connection, password string) string {
 	return u.String()
 }
 
-// OpenTarget decrypts the stored credential and opens a single connection to the
-// managed database. Read-only connections run every transaction as READ ONLY and
-// only accept one statement per query (extended protocol).
 func (s *AdminPostgresStore) OpenTarget(ctx context.Context, dbID int64, readOnly bool) (explorer.Target, error) {
 	var (
 		c         domain.Connection
@@ -78,8 +73,7 @@ func (s *AdminPostgresStore) OpenTarget(ctx context.Context, dbID int64, readOnl
 	return &pgTarget{conn: conn, readOnly: readOnly}, nil
 }
 
-// describeConnectError classifies connection and authentication failures into
-// safe, human-readable reasons without leaking sensitive credentials.
+
 func describeConnectError(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
@@ -156,9 +150,7 @@ func (t *pgTarget) Preview(ctx context.Context, table string, limit int) (explor
 	return result, nil
 }
 
-// Run executes user SQL. Read-only targets use the extended protocol, which the
-// server restricts to exactly one statement. Editable targets use the simple
-// protocol so multi-statement scripts run as one implicit transaction.
+
 func (t *pgTarget) Run(ctx context.Context, sql string, maxRows int) []explorer.StatementResult {
 	defer t.resetTx(ctx)
 	pg := t.conn.PgConn()
@@ -176,8 +168,6 @@ func (t *pgTarget) Run(ctx context.Context, sql string, maxRows int) []explorer.
 	return results
 }
 
-// RunInTx executes a slice of migration statements inside an explicit database
-// transaction (BEGIN ... COMMIT on success, ROLLBACK on failure).
 func (t *pgTarget) RunInTx(ctx context.Context, statements []string, maxRows int) []explorer.StatementResult {
 	t.resetTx(ctx)
 	tx, err := t.conn.Begin(ctx)
@@ -200,8 +190,7 @@ func (t *pgTarget) RunInTx(ctx context.Context, statements []string, maxRows int
 	return results
 }
 
-// resetTx rolls back a transaction the user script left open (e.g. BEGIN
-// without COMMIT, or an aborted explicit transaction).
+
 func (t *pgTarget) resetTx(ctx context.Context) {
 	if t.conn.PgConn().TxStatus() != 'I' {
 		_, _ = t.conn.Exec(ctx, "ROLLBACK")
@@ -381,7 +370,6 @@ func (s *AdminPostgresStore) RecordMigration(ctx context.Context, r explorer.Mig
 		return err
 	}
 	defer tx.Rollback()
-	// Lock the connection row so concurrent executions get distinct versions.
 	if _, err := tx.ExecContext(ctx, `SELECT id FROM database_connections WHERE id = $1 FOR UPDATE`, r.DatabaseID); err != nil {
 		return err
 	}
@@ -459,7 +447,6 @@ func (s *AdminPostgresStore) RecentChanges(ctx context.Context, dbID int64, limi
 	return changes, rows.Err()
 }
 
-// migrationTitle uses the first non-empty line of the script, capped at 80 runes.
 func migrationTitle(sql string) string {
 	for _, line := range strings.Split(sql, "\n") {
 		if line = strings.TrimSpace(line); line != "" {

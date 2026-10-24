@@ -34,7 +34,6 @@ func TestTargetDSNEscapesCredentials(t *testing.T) {
 	}
 }
 
-// Integration test: set TEST_POSTGRES_DSN to a disposable database.
 func openTestTarget(t *testing.T, readOnly bool) *pgTarget {
 	dsn := os.Getenv("TEST_POSTGRES_DSN")
 	if dsn == "" {
@@ -67,12 +66,10 @@ func TestTargetIntegration(t *testing.T) {
 		t.Fatalf("select = %+v", sel)
 	}
 
-	// Failing script is rolled back atomically.
 	results = edit.Run(ctx, "INSERT INTO explorer_it VALUES (3, 'c'); SELECT 1/0", 10)
 	if !hasError(results) {
 		t.Fatalf("expected error, got %+v", results)
 	}
-	// Unterminated explicit transaction is rolled back.
 	edit.Run(ctx, "BEGIN; INSERT INTO explorer_it VALUES (4, 'd')", 10)
 
 	tables, err := edit.Tables(ctx)
