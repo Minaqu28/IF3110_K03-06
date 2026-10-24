@@ -131,10 +131,6 @@ func (h *AuthenticationHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if session.Previous {
-		http.Error(w, "stale session identifier", http.StatusForbidden)
-		return
-	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
@@ -202,4 +198,3 @@ func (h *AuthenticationHandler) verifyLoginCSRF(r *http.Request) bool {
 }
 
 func sameToken(a, b string) bool { return a != "" && b != "" && hmac.Equal([]byte(a), []byte(b)) }
-
