@@ -1,8 +1,17 @@
 :root{
+    --bg-image:url("/static/image.jpeg");
+    --bg-dim:.55;
     font-family:system-ui,
     sans-serif;
     color:#172033;
-    background:#f4f6fa}
+    background-color:#f4f6fa;
+    background-image:
+        linear-gradient(rgb(244 246 250 / var(--bg-dim)), rgb(244 246 250 / var(--bg-dim))),
+        var(--bg-image);
+    background-size:cover;
+    background-position:center;
+    background-repeat:no-repeat;
+    background-attachment:fixed}
     
 body{
     min-height:100vh;
@@ -31,17 +40,21 @@ label{
 .admin-layout{width:min(94vw,70rem);margin:2rem auto}
 .admin-layout h1{margin:1.5rem 0}
 .panel{margin:1.5rem 0;overflow-x:auto}
+.panel table {
+    width: 100%;
+    table-layout: fixed;
+}
 .form-grid{display:flex;flex-wrap:wrap;align-items:end;gap:.75rem}
 .form-grid label{margin:0;min-width:10rem;flex:1}
 .form-grid input,.form-grid select{display:block;width:100%;box-sizing:border-box;padding:.5rem;margin-top:.35rem}
 .form-grid input[type=checkbox]{display:inline;width:auto}
 button{padding:.55rem .8rem;cursor:pointer}
-table{width:100%;border-collapse:collapse;margin-top:1rem}
-th,td{text-align:left;padding:.5rem;border-bottom:1px solid #e2e7ef}
+table{width:100%;border-collapse:collapse;margin-top:1rem;table-layout:fixed}
+th,td{text-align:left;padding:.5rem;border-bottom:1px solid #e2e7ef;vertical-align:top;overflow-wrap:anywhere}
 nav{margin-bottom:1rem}
 .inline-form{display:flex;gap:.4rem;align-items:center;margin:.25rem 0}
 .inline-form label{margin:0;white-space:nowrap}
-td details{min-width:12rem}
+td details{width:100%;box-sizing:border-box}
 
 .meta{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem}
 .meta dt{font-weight:600}
@@ -60,7 +73,7 @@ pre.error{white-space:pre-wrap;background:#fdf1f2;padding:.6rem}
 .status-SUCCESS{color:#1b6b3a;font-weight:600}
 .status-FAILED{color:#9c1726;font-weight:600}
 .status-DRAFT{color:#7a5a00;font-weight:600}
-.op-list pre,td pre{margin:.25rem 0;white-space:pre-wrap;background:#f4f6fa;padding:.4rem}
+.op-list pre,td pre{margin:.25rem 0;white-space:pre-wrap;background:#f4f6fa;padding:.4rem;max-width:100%;overflow-x:auto}
 .plan-tree,.plan-tree ol{list-style:none;margin:.75rem 0;padding-left:1.25rem;border-left:2px solid #dce2eb}
 .plan-tree{padding-left:0;border-left:0}
 .plan-node{margin:.65rem 0;padding:.75rem;background:#f7f9fc;border:1px solid #dce2eb}
@@ -69,6 +82,10 @@ pre.error{white-space:pre-wrap;background:#fdf1f2;padding:.6rem}
 .plan-metrics span{padding:.2rem .4rem;background:#e8edf5;font-family:ui-monospace,monospace;font-size:.8rem}
 .plan-node p{margin:.45rem 0 0;overflow-wrap:anywhere}
 @media (max-width:48rem){.explorer{grid-template-columns:1fr}}
+
+.wide {
+    grid-column: span 2;
+}
 
 .explorer-main {
     display: grid;
@@ -85,4 +102,163 @@ pre.error{white-space:pre-wrap;background:#fdf1f2;padding:.6rem}
     .explorer-main {
         grid-template-columns: 1fr;
     }
+}
+
+.actions {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: .5rem;
+    align-items: center;
+    white-space: normal;
+}
+
+td details form + form {
+    margin-top: .5rem;
+}
+
+td details[open] > *:not(summary) {
+    max-width: 100%;
+    overflow: auto;
+}
+
+.database-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+    gap: 1rem;
+}
+
+.database-card {
+    display: flex;
+    flex-direction: column;
+    gap: .25rem;
+    padding: 1rem 1.25rem;
+    border: 1px solid #dce2eb;
+    background: #fff;
+    color: inherit;
+    text-decoration: none;
+    transition: background .15s, border-color .15s;
+}
+
+.database-card:hover,
+.database-card:focus-visible {
+    background: #eef3fb;
+    border-color: #b8c4d8;
+    outline: none;
+}
+
+.database-card-name { font-size: 1.05rem; }
+
+.database-card-db {
+    color: #5a6577;
+    font-family: ui-monospace, monospace;
+    font-size: .85rem;
+}
+
+@media (max-width: 48rem) {
+    .database-grid { grid-template-columns: 1fr; }
+}
+
+.database-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: .75rem 1.5rem;
+    align-items: baseline;
+}
+
+.database-row-name a {
+    color: inherit;
+    text-decoration: none;
+}
+.database-row-name a:hover { text-decoration: underline; }
+
+.database-row-db {
+    color: #5a6577;
+    font-family: ui-monospace, monospace;
+    font-size: .85rem;
+}
+
+.database-row-open {
+    color: #172033;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+}
+.database-row-open:hover { text-decoration: underline; }
+
+@media (max-width: 48rem) {
+    .database-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+.nav-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.nav-grid a {
+    display: flex;
+    flex-direction: column;
+    gap: .25rem;
+    padding: 1rem 1.25rem;
+    border: 1px solid #dce2eb;
+    background: #fff;
+    color: inherit;
+    text-decoration: none;
+    font-weight: 600;
+    transition: background .15s, border-color .15s;
+}
+
+.nav-grid a:hover,
+.nav-grid a:focus-visible {
+    background: #eef3fb;
+    border-color: #b8c4d8;
+    outline: none;
+}
+
+@media (max-width: 48rem) {
+    .nav-grid { grid-template-columns: 1fr; }
+}
+
+/* Admin tables: column sizing (opt-in via class, other tables unaffected) */
+th.col-actions { width: 40%; }
+th.col-id { width: 4rem; }
+
+@media (max-width: 48rem) {
+    th.col-actions { width: 60%; }
+}
+
+/* Sidebar table list: narrow "Baris" column, name column takes the rest */
+.table-list table { table-layout: auto; }
+.table-list th:last-child,
+.table-list td:last-child {
+    width: 1%;
+    white-space: nowrap;
+    text-align: right;
+}
+.table-list td:first-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+/* Result/preview tables: size columns to content, scroll horizontally instead of overlapping */
+table.result {
+    table-layout: auto;
+    width: max-content;
+    min-width: 100%;
+}
+table.result th,
+table.result td {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-width: 32rem;
+}
+table.result th {
+    position: sticky;
+    top: 0;
+    background: #fff;
 }

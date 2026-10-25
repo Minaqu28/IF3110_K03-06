@@ -8,7 +8,7 @@
 </head>
 <body>
 <main class="admin-layout">
-    <nav><a href="/dashboard">Dashboard</a> · <a href="/databases">Database saya</a></nav>
+    <nav class="nav-grid"><a href="/dashboard">&lt; Dashboard</a></nav>
     <h1>Administrasi Platform</h1>
     {{$csrf := .Session.CSRFToken}}
 
@@ -18,54 +18,124 @@
             <input type="hidden" name="csrf_token" value="{{$csrf}}">
             <label>Username <input name="username" required></label>
             <label>Password awal <input type="password" name="password" minlength="12" required></label>
-            <label><input type="checkbox" name="is_admin"> Platform Admin</label>
+            <label class="checkbox-label"><input type="checkbox" name="is_admin"> Platform Admin</label>
             <button type="submit">Tambah pengguna</button>
         </form>
-        <table><thead><tr><th>ID</th><th>Username</th><th>Peran</th><th>Status</th><th>Aksi</th></tr></thead><tbody>
-        {{range .Users}}<tr><td>{{.ID}}</td><td>{{.Username}}</td><td>{{if .IsPlatformAdmin}}Admin{{else}}User{{end}}</td><td>{{if .IsActive}}Aktif{{else}}Nonaktif{{end}}</td><td>
-            <form method="post" action="/admin/users/update" class="inline-form">
-                <input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="user_id" value="{{.ID}}">
-                <input name="username" value="{{.Username}}" aria-label="Username" required>
-                <label><input type="checkbox" name="is_admin" {{if .IsPlatformAdmin}}checked{{end}}> Admin</label>
-                <button type="submit">Simpan</button>
-            </form>
-            <form method="post" action="/admin/users/password" class="inline-form">
-                <input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="user_id" value="{{.ID}}">
-                <input type="password" name="password" minlength="12" aria-label="Password baru untuk {{.Username}}" placeholder="Password baru" required>
-                <button type="submit">Reset password</button>
-            </form>
-            <form method="post" action="/admin/users/status">
-                <input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="user_id" value="{{.ID}}">
-                {{if .IsActive}}<input type="hidden" name="active" value="false"><button type="submit">Nonaktifkan</button>{{else}}<input type="hidden" name="active" value="true"><button type="submit">Aktifkan</button>{{end}}
-            </form>
-            <form method="post" action="/admin/users/delete"><input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="user_id" value="{{.ID}}"><button type="submit">Hapus pengguna</button></form>
-        </td></tr>{{end}}
-        </tbody></table>
+
+        <table>
+            <thead><tr><th class="col-id">ID</th><th>Username</th><th>Peran</th><th>Status</th><th class="col-actions">Aksi</th></tr></thead>
+            <tbody>
+            {{range .Users}}
+            <tr>
+                <td>{{.ID}}</td>
+                <td>{{.Username}}</td>
+                <td>{{if .IsPlatformAdmin}}Admin{{else}}User{{end}}</td>
+                <td>{{if .IsActive}}Aktif{{else}}Nonaktif{{end}}</td>
+                <td>
+                    <details>
+                        <summary>Ubah pengguna</summary>
+                        <form method="post" action="/admin/users/update" class="form-grid">
+                            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+                            <input type="hidden" name="user_id" value="{{.ID}}">
+                            <label>Username <input name="username" value="{{.Username}}" required></label>
+                            <label class="checkbox-label"><input type="checkbox" name="is_admin" {{if .IsPlatformAdmin}}checked{{end}}> Admin</label>
+                            <button type="submit">Simpan</button>
+                        </form>
+                        <form method="post" action="/admin/users/password" class="form-grid">
+                            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+                            <input type="hidden" name="user_id" value="{{.ID}}">
+                            <label>Password baru <input type="password" name="password" minlength="12" aria-label="Password baru untuk {{.Username}}" placeholder="Password baru" required></label>
+                            <button type="submit">Reset password</button>
+                        </form>
+                    </details>
+                    <div class="actions">
+                        <form method="post" action="/admin/users/status">
+                            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+                            <input type="hidden" name="user_id" value="{{.ID}}">
+                            {{if .IsActive}}
+                            <input type="hidden" name="active" value="false">
+                            <button type="submit">Nonaktifkan</button>
+                            {{else}}
+                            <input type="hidden" name="active" value="true">
+                            <button type="submit">Aktifkan</button>
+                            {{end}}
+                        </form>
+                        <form method="post" action="/admin/users/delete">
+                            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+                            <input type="hidden" name="user_id" value="{{.ID}}">
+                            <button type="submit">Hapus pengguna</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
     </section>
 
     <section class="panel">
         <h2>Group dan anggota</h2>
         <form method="post" action="/admin/groups" class="form-grid">
             <input type="hidden" name="csrf_token" value="{{$csrf}}">
-            <label>Nama group <input name="name" required></label><button type="submit">Tambah group</button>
+            <label>Nama group <input name="name" required></label>
+            <button type="submit">Tambah group</button>
         </form>
-        <table><thead><tr><th>ID</th><th>Nama group</th><th>Aksi</th></tr></thead><tbody>
-        {{range .Groups}}<tr><td>{{.ID}}</td><td>{{.Name}}</td><td>
-            <form method="post" action="/admin/groups/rename" class="inline-form"><input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="group_id" value="{{.ID}}"><input name="name" value="{{.Name}}" aria-label="Nama group" required><button type="submit">Ubah nama</button></form>
-            <form method="post" action="/admin/groups/delete"><input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="group_id" value="{{.ID}}"><button type="submit">Hapus group</button></form>
-        </td></tr>{{end}}
-        </tbody></table>
+
+        <table>
+            <thead><tr><th class="col-id">ID</th><th>Nama group</th><th class="col-actions">Aksi</th></tr></thead>
+            <tbody>
+            {{range .Groups}}
+            <tr>
+                <td>{{.ID}}</td>
+                <td>{{.Name}}</td>
+                <td>
+                    <div class="actions">
+                        <form method="post" action="/admin/groups/rename" class="inline-form">
+                            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+                            <input type="hidden" name="group_id" value="{{.ID}}">
+                            <input name="name" value="{{.Name}}" aria-label="Nama group" required>
+                            <button type="submit">Ubah nama</button>
+                        </form>
+                        <form method="post" action="/admin/groups/delete">
+                            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+                            <input type="hidden" name="group_id" value="{{.ID}}">
+                            <button type="submit">Hapus group</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+
         <form method="post" action="/admin/memberships" class="form-grid">
-            <input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="action" value="add">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <input type="hidden" name="action" value="add">
             <label>Group <select name="group_id" required>{{range .Groups}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
             <label>Pengguna <select name="user_id" required>{{range .Users}}<option value="{{.ID}}">{{.Username}}</option>{{end}}</select></label>
             <button type="submit">Tambah anggota</button>
         </form>
-        <table><thead><tr><th>Group</th><th>Anggota</th><th>Aksi</th></tr></thead><tbody>
-        {{range .Memberships}}<tr><td>{{.GroupName}}</td><td>{{.Username}}</td><td>
-            <form method="post" action="/admin/memberships"><input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="action" value="remove"><input type="hidden" name="group_id" value="{{.GroupID}}"><input type="hidden" name="user_id" value="{{.UserID}}"><button type="submit">Hapus anggota</button></form>
-        </td></tr>{{end}}
-        </tbody></table>
+
+        <table>
+            <thead><tr><th>Group</th><th>Anggota</th><th class="col-actions">Aksi</th></tr></thead>
+            <tbody>
+            {{range .Memberships}}
+            <tr>
+                <td>{{.GroupName}}</td>
+                <td>{{.Username}}</td>
+                <td>
+                    <form method="post" action="/admin/memberships">
+                        <input type="hidden" name="csrf_token" value="{{$csrf}}">
+                        <input type="hidden" name="action" value="remove">
+                        <input type="hidden" name="group_id" value="{{.GroupID}}">
+                        <input type="hidden" name="user_id" value="{{.UserID}}">
+                        <button type="submit">Hapus anggota</button>
+                    </form>
+                </td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
     </section>
 
     <section class="panel">
@@ -78,42 +148,106 @@
             <label>Nama database <input name="db_name" required></label>
             <label>Username database <input name="db_user" required></label>
             <label>Password database <input name="password" type="password" required></label>
-            <label>SSL mode <select name="ssl_mode"><option value="prefer">prefer</option><option value="require">require</option><option value="disable">disable</option><option value="verify-ca">verify-ca</option><option value="verify-full">verify-full</option><option value="allow">allow</option></select></label>
+            <label>SSL mode
+                <select name="ssl_mode">
+                    <option value="prefer">prefer</option>
+                    <option value="require">require</option>
+                    <option value="disable">disable</option>
+                    <option value="verify-ca">verify-ca</option>
+                    <option value="verify-full">verify-full</option>
+                    <option value="allow">allow</option>
+                </select>
+            </label>
             <button type="submit">Daftarkan koneksi</button>
         </form>
-        <table><thead><tr><th>ID</th><th>Nama</th><th>Host</th><th>Database</th><th>User</th><th>Aksi</th></tr></thead><tbody>
-        {{range .Connections}}<tr><td>{{.ID}}</td><td>{{.Name}}</td><td>{{.Host}}:{{.Port}}</td><td>{{.DBname}}</td><td>{{.DBuser}}</td><td>
-            <details><summary>Ubah koneksi</summary>
-            <form method="post" action="/admin/connections/update" class="form-grid">
-                <input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="database_id" value="{{.ID}}">
-                <label>Nama <input name="name" value="{{.Name}}" required></label>
-                <label>Host <input name="host" value="{{.Host}}" required></label>
-                <label>Port <input name="port" type="number" min="1" max="65535" value="{{.Port}}" required></label>
-                <label>Database <input name="db_name" value="{{.DBname}}" required></label>
-                <label>User <input name="db_user" value="{{.DBuser}}" required></label>
-                <label>Password baru (opsional) <input name="password" type="password"></label>
-                <label>SSL mode <select name="ssl_mode"><option value="{{.SSLMode}}">{{.SSLMode}}</option><option value="prefer">prefer</option><option value="require">require</option><option value="disable">disable</option><option value="verify-ca">verify-ca</option><option value="verify-full">verify-full</option><option value="allow">allow</option></select></label>
-                <button type="submit">Simpan koneksi</button>
-            </form></details>
-            <form method="post" action="/admin/connections/delete"><input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="database_id" value="{{.ID}}"><button type="submit">Hapus koneksi</button></form>
-        </td></tr>{{end}}
-        </tbody></table>
+
+        <table>
+            <thead><tr><th class="col-id">ID</th><th>Nama</th><th>Host</th><th>Database</th><th>User</th><th class="col-actions">Aksi</th></tr></thead>
+            <tbody>
+            {{range .Connections}}
+            <tr>
+                <td>{{.ID}}</td>
+                <td>{{.Name}}</td>
+                <td>{{.Host}}:{{.Port}}</td>
+                <td>{{.DBname}}</td>
+                <td>{{.DBuser}}</td>
+                <td>
+                    <details>
+                        <summary>Ubah koneksi</summary>
+                        <form method="post" action="/admin/connections/update" class="form-grid">
+                            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+                            <input type="hidden" name="database_id" value="{{.ID}}">
+                            <label>Nama <input name="name" value="{{.Name}}" required></label>
+                            <label>Host <input name="host" value="{{.Host}}" required></label>
+                            <label>Port <input name="port" type="number" min="1" max="65535" value="{{.Port}}" required></label>
+                            <label>Database <input name="db_name" value="{{.DBname}}" required></label>
+                            <label>User <input name="db_user" value="{{.DBuser}}" required></label>
+                            <label>Password baru (opsional) <input name="password" type="password"></label>
+                            <label>SSL mode
+                                <select name="ssl_mode">
+                                    <option value="{{.SSLMode}}">{{.SSLMode}}</option>
+                                    <option value="prefer">prefer</option>
+                                    <option value="require">require</option>
+                                    <option value="disable">disable</option>
+                                    <option value="verify-ca">verify-ca</option>
+                                    <option value="verify-full">verify-full</option>
+                                    <option value="allow">allow</option>
+                                </select>
+                            </label>
+                            <button type="submit">Simpan koneksi</button>
+                        </form>
+                    </details>
+                    <div class="actions">
+                        <form method="post" action="/admin/connections/delete">
+                            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+                            <input type="hidden" name="database_id" value="{{.ID}}">
+                            <button type="submit">Hapus koneksi</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
     </section>
 
     <section class="panel">
         <h2>Izin group per database</h2>
         <form method="post" action="/admin/grants" class="form-grid">
-            <input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="action" value="grant">
+            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+            <input type="hidden" name="action" value="grant">
             <label>Group <select name="group_id" required>{{range .Groups}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
             <label>Database <select name="database_id" required>{{range .Connections}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
-            <label>Izin <select name="level"><option value="VIEW_ONLY">VIEW_ONLY</option><option value="VIEW_EDIT">VIEW_EDIT</option></select></label>
+            <label>Izin
+                <select name="level">
+                    <option value="VIEW_ONLY">VIEW_ONLY</option>
+                    <option value="VIEW_EDIT">VIEW_EDIT</option>
+                </select>
+            </label>
             <button type="submit">Simpan izin</button>
         </form>
-        <table><thead><tr><th>Group</th><th>Database</th><th>Izin</th><th>Aksi</th></tr></thead><tbody>
-        {{range .Grants}}<tr><td>{{.GroupName}}</td><td>{{.DatabaseName}}</td><td>{{.Level}}</td><td>
-            <form method="post" action="/admin/grants"><input type="hidden" name="csrf_token" value="{{$csrf}}"><input type="hidden" name="action" value="revoke"><input type="hidden" name="group_id" value="{{.GroupID}}"><input type="hidden" name="database_id" value="{{.DatabaseID}}"><button type="submit">Cabut izin</button></form>
-        </td></tr>{{end}}
-        </tbody></table>
+
+        <table>
+            <thead><tr><th>Group</th><th>Database</th><th>Izin</th><th class="col-actions">Aksi</th></tr></thead>
+            <tbody>
+            {{range .Grants}}
+            <tr>
+                <td>{{.GroupName}}</td>
+                <td>{{.DatabaseName}}</td>
+                <td>{{.Level}}</td>
+                <td>
+                    <form method="post" action="/admin/grants">
+                        <input type="hidden" name="csrf_token" value="{{$csrf}}">
+                        <input type="hidden" name="action" value="revoke">
+                        <input type="hidden" name="group_id" value="{{.GroupID}}">
+                        <input type="hidden" name="database_id" value="{{.DatabaseID}}">
+                        <button type="submit">Cabut izin</button>
+                    </form>
+                </td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
     </section>
 </main>
 </body>

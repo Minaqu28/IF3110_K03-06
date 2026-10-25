@@ -1,9 +1,33 @@
 <!doctype html>
 <html lang="id">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Database Saya</title><link rel="stylesheet" href="/static/style.css"></head>
-<body><main class="admin-layout">
-    <nav><a href="/dashboard">Dashboard</a></nav>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Database Saya</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="admin-layout">
+    <nav class="nav-grid"><a href="/dashboard">&lt; Dashboard</a></nav>
     <h1>Database saya</h1>
-    {{if .Connections}}<ul>{{range .Connections}}<li><a href="/databases/{{.ID}}">{{.Name}}</a> ({{.DBname}})</li>{{end}}</ul>{{else}}<p>Belum ada database yang dapat Anda akses.</p>{{end}}
-</main></body>
+
+    {{if .Connections}}
+        {{range .Connections}}
+        <section class="panel">
+            <div class="database-row">
+                <strong class="database-row-name">
+                    <a href="/databases/{{.ID}}">{{.Name}}</a>
+                </strong>
+                <span class="database-row-db">{{.DBname}}</span>
+                <a class="database-row-open" href="/databases/{{.ID}}">Buka ></a>
+            </div>
+        </section>
+        {{end}}
+    {{else}}
+    <section class="panel">
+        <p>Belum ada database yang dapat Anda akses.</p>
+    </section>
+    {{end}}
+</main>
+</body>
 </html>
