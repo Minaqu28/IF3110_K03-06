@@ -72,3 +72,20 @@ pre.error{white-space:pre-wrap;background:#fdf1f2;padding:.6rem}
 .plan-metrics span{padding:.2rem .4rem;background:#e8edf5;font-family:ui-monospace,monospace;font-size:.8rem}
 .plan-node p{margin:.45rem 0 0;overflow-wrap:anywhere}
 @media (max-width:48rem){.explorer{grid-template-columns:1fr}}
+
+.explorer-main {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.5rem;
+    align-items: start;
+}
+
+.explorer-main > .panel {
+    margin: 0;
+}
+
+@media (max-width: 48rem) {
+    .explorer-main {
+        grid-template-columns: 1fr;
+    }
+}
