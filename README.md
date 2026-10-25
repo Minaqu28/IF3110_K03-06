@@ -13,9 +13,7 @@ Login -> Access Control -> Select Database -> View Schema/Data
 
 - [Fitur](#fitur)
 - [Teknologi](#teknologi)
-- [Memulai dengan Cepat (Docker Compose)](#memulai-dengan-cepat-docker-compose)
-- [Data Demo](#data-demo)
-- [Konfigurasi](#konfigurasi)
+- [Menjalankan Program](#menjalankan-program)
 - [Keputusan Desain](#keputusan-desain)
   - [Autentikasi dan session](#autentikasi-dan-session)
   - [Otorisasi dan akses efektif](#otorisasi-dan-akses-efektif)
