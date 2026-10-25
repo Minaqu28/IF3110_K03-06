@@ -61,9 +61,6 @@ pre.error{white-space:pre-wrap;background:#fdf1f2;padding:.6rem}
 .status-FAILED{color:#9c1726;font-weight:600}
 .status-DRAFT{color:#7a5a00;font-weight:600}
 .op-list pre,td pre{margin:.25rem 0;white-space:pre-wrap;background:#f4f6fa;padding:.4rem}
-.plan-warnings{margin:1rem 0;padding:.75rem 1rem;background:#fff8df;border-left:4px solid #d69b00}
-.plan-warnings h3{margin:.1rem 0 .5rem}
-.plan-warnings ul{margin:.25rem 0;padding-left:1.25rem}
 .plan-tree,.plan-tree ol{list-style:none;margin:.75rem 0;padding-left:1.25rem;border-left:2px solid #dce2eb}
 .plan-tree{padding-left:0;border-left:0}
 .plan-node{margin:.65rem 0;padding:.75rem;background:#f7f9fc;border:1px solid #dce2eb}

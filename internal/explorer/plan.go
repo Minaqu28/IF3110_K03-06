@@ -3,7 +3,6 @@ package explorer
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"strings"
 
@@ -62,7 +61,6 @@ type ExecutionPlan struct {
 	ExecutionTimeMs float64
 	NodeCount       int
 	Root            PlanNode
-	Warnings        []string
 }
 
 type PlanTarget interface {
@@ -129,7 +127,7 @@ func (s *Service) Explain(ctx context.Context, actor domain.User, dbID int64, qu
 	}
 	plan.Query = query
 	plan.Analyze = analyze
-	plan.NodeCount, plan.Warnings = summarizePlan(plan.Root, analyze)
+	plan.NodeCount = countPlanNodes(plan.Root)
 	view.Plan = &plan
 	s.loadTables(ctx, target, &view)
 	s.loadHistory(ctx, &view)
@@ -157,35 +155,15 @@ func IsExplainableQuery(query string) bool {
 	}
 }
 
-func summarizePlan(root PlanNode, analyze bool) (int, []string) {
+func countPlanNodes(root PlanNode) int {
 	count := 0
-	warnings := make([]string, 0)
-	seen := make(map[string]bool)
 	var walk func(PlanNode)
 	walk = func(node PlanNode) {
 		count++
-		if node.NodeType == "Seq Scan" && node.RelationName != "" {
-			message := fmt.Sprintf("Sequential Scan pada %s; periksa filter dan index jika tabel berukuran besar.", node.RelationName)
-			if !seen[message] {
-				seen[message] = true
-				warnings = append(warnings, message)
-			}
-		}
-		if analyze && node.ActualRows != nil && node.PlanRows > 0 {
-			actual := *node.ActualRows
-			estimated := float64(node.PlanRows)
-			if actual > estimated*10 || (actual > 0 && estimated > actual*10) {
-				message := fmt.Sprintf("Estimasi baris pada node %s berbeda lebih dari 10x dari hasil aktual; statistik tabel mungkin perlu diperbarui.", node.NodeType)
-				if !seen[message] {
-					seen[message] = true
-					warnings = append(warnings, message)
-				}
-			}
-		}
 		for _, child := range node.Plans {
 			walk(child)
 		}
 	}
 	walk(root)
-	return count, warnings
+	return count
 }

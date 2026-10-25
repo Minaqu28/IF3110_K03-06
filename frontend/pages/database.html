@@ -80,12 +80,6 @@
                     {{if .Analyze}}<dt>Execution time</dt><dd>{{printf "%.3f" .ExecutionTimeMs}} ms</dd>{{end}}
                     <dt>Plan nodes</dt><dd>{{.NodeCount}}</dd>
                 </dl>
-                {{if .Warnings}}
-                <div class="plan-warnings">
-                    <h3>Hal yang perlu diperiksa</h3>
-                    <ul>{{range .Warnings}}<li>{{.}}</li>{{end}}</ul>
-                </div>
-                {{end}}
                 <ol class="plan-tree">{{template "plan-node" .Root}}</ol>
             </section>
             {{end}}

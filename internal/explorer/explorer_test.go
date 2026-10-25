@@ -109,6 +109,7 @@ func (f *fakeTarget) Explain(_ context.Context, query string, analyze bool) (Exe
 		NodeType:     "Seq Scan",
 		RelationName: "products",
 		PlanRows:     10,
+		Plans:        []PlanNode{{NodeType: "Result"}},
 	}}
 	if analyze {
 		plan.Root.ActualRows = &actualRows
@@ -238,7 +239,7 @@ func TestExplainViewOnlyUsesReadOnlyTarget(t *testing.T) {
 	if len(target.ran) != 1 || target.ran[0] != "SELECT * FROM products" {
 		t.Fatalf("planned queries = %v", target.ran)
 	}
-	if view.Plan == nil || !view.Plan.Analyze || view.Plan.NodeCount != 1 || len(view.Plan.Warnings) != 2 {
+	if view.Plan == nil || !view.Plan.Analyze || view.Plan.NodeCount != 2 {
 		t.Fatalf("plan summary = %+v", view.Plan)
 	}
 }
