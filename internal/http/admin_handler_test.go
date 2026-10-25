@@ -29,6 +29,14 @@ func (s *recordingAdminStore) SetUserActive(context.Context, int64, bool) error 
 	s.rec("SetUserActive")
 	return nil
 }
+func (s *recordingAdminStore) UpdateUser(context.Context, int64, string, bool) error {
+	s.rec("UpdateUser")
+	return nil
+}
+func (s *recordingAdminStore) ResetPassword(context.Context, int64, string) error {
+	s.rec("ResetPassword")
+	return nil
+}
 func (s *recordingAdminStore) DeleteUser(context.Context, int64) error {
 	s.rec("DeleteUser")
 	return nil
@@ -37,12 +45,32 @@ func (s *recordingAdminStore) CreateGroup(_ context.Context, n string) (domain.G
 	s.rec("CreateGroup")
 	return domain.Group{ID: 1, Name: n}, nil
 }
+func (s *recordingAdminStore) DeleteGroup(context.Context, int64) error {
+	s.rec("DeleteGroup")
+	return nil
+}
 func (s *recordingAdminStore) GrantAccess(context.Context, int64, int64, authorization.AccessLevel) error {
 	s.rec("GrantAccess")
 	return nil
 }
+func (s *recordingAdminStore) RevokeAccess(context.Context, int64, int64) error {
+	s.rec("RevokeAccess")
+	return nil
+}
 func (s *recordingAdminStore) AddMember(context.Context, int64, int64) error {
 	s.rec("AddMember")
+	return nil
+}
+func (s *recordingAdminStore) RemoveMember(context.Context, int64, int64) error {
+	s.rec("RemoveMember")
+	return nil
+}
+func (s *recordingAdminStore) UpdateConnection(context.Context, domain.Connection, string) error {
+	s.rec("UpdateConnection")
+	return nil
+}
+func (s *recordingAdminStore) DeleteConnection(context.Context, int64) error {
+	s.rec("DeleteConnection")
 	return nil
 }
 func (s *recordingAdminStore) ListUsers(context.Context) ([]domain.User, error) {
@@ -191,6 +219,66 @@ func TestAdminMutationsSucceedForAdminWithCSRF(t *testing.T) {
 		if len(store.calls) != 1 || store.calls[0] != want[path] {
 			t.Errorf("POST %s store calls = %v, want [%s]", path, store.calls, want[path])
 		}
+	}
+}
+
+func TestAdminSelfMembershipRenewsSessionWithoutLoginRedirect(t *testing.T) {
+	router, store := newAdminRouter(t, sessionFor(rootUser))
+	form := url.Values{
+		"action":     {"add"},
+		"group_id":   {"1"},
+		"user_id":    {"1"},
+		"csrf_token": {adminCSRF},
+	}
+	rec := do(router, http.MethodPost, "/admin/memberships", form, true)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/admin" {
+		t.Fatalf("self membership = %d -> %q, want 303 -> /admin", rec.Code, rec.Header().Get("Location"))
+	}
+	cookie := findCookie(rec, sessionCookie)
+	if cookie == nil || cookie.Value != "renewed-session" || !cookie.HttpOnly {
+		t.Fatalf("renewed cookie = %+v", cookie)
+	}
+	if len(store.calls) != 1 || store.calls[0] != "AddMember" {
+		t.Fatalf("store calls = %v", store.calls)
+	}
+}
+
+func TestPrivilegeAffectingAdminMutationsRenewSession(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		form url.Values
+		call string
+	}{
+		{"update own account", "/admin/users/update", url.Values{"user_id": {"1"}, "username": {"root"}, "is_admin": {"on"}}, "UpdateUser"},
+		{"reset own password", "/admin/users/password", url.Values{"user_id": {"1"}, "password": {"new-long-password"}}, "ResetPassword"},
+		{"delete group", "/admin/groups/delete", url.Values{"group_id": {"1"}}, "DeleteGroup"},
+		{"remove self membership", "/admin/memberships", url.Values{"action": {"remove"}, "group_id": {"1"}, "user_id": {"1"}}, "RemoveMember"},
+		{"update connection", "/admin/connections/update", url.Values{
+			"database_id": {"1"}, "name": {"target"}, "host": {"db"}, "port": {"5432"},
+			"db_name": {"target"}, "db_user": {"app"}, "ssl_mode": {"disable"},
+		}, "UpdateConnection"},
+		{"delete connection", "/admin/connections/delete", url.Values{"database_id": {"1"}}, "DeleteConnection"},
+		{"grant access", "/admin/grants", url.Values{"action": {"grant"}, "group_id": {"1"}, "database_id": {"1"}, "level": {"VIEW_EDIT"}}, "GrantAccess"},
+		{"revoke access", "/admin/grants", url.Values{"action": {"revoke"}, "group_id": {"1"}, "database_id": {"1"}}, "RevokeAccess"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router, store := newAdminRouter(t, sessionFor(rootUser))
+			tt.form.Set("csrf_token", adminCSRF)
+			rec := do(router, http.MethodPost, tt.path, tt.form, true)
+			if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/admin" {
+				t.Fatalf("status=%d location=%q, want 303 -> /admin", rec.Code, rec.Header().Get("Location"))
+			}
+			cookie := findCookie(rec, sessionCookie)
+			if cookie == nil || cookie.Value != "renewed-session" || !cookie.HttpOnly {
+				t.Fatalf("renewed cookie = %+v", cookie)
+			}
+			if len(store.calls) != 1 || store.calls[0] != tt.call {
+				t.Fatalf("store calls = %v, want [%s]", store.calls, tt.call)
+			}
+		})
 	}
 }
 

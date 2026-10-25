@@ -23,6 +23,9 @@ type fakeAuth struct{ session authentication.Session }
 
 func (f fakeAuth) Login(context.Context, string, string) (string, error) { return "", nil }
 func (f fakeAuth) Logout(context.Context, string) error                  { return nil }
+func (f fakeAuth) RenewAfterPrivilegeChange(context.Context, authentication.Session) (string, error) {
+	return "renewed-session", nil
+}
 func (f fakeAuth) Validate(_ context.Context, id string) (authentication.Session, error) {
 	if id != "valid" {
 		return authentication.Session{}, authentication.ErrUnauthenticated

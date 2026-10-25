@@ -26,6 +26,9 @@ func (s *testAuthenticationService) Validate(context.Context, string) (authentic
 }
 
 func (s *testAuthenticationService) Logout(context.Context, string) error { return nil }
+func (s *testAuthenticationService) RenewAfterPrivilegeChange(context.Context, authentication.Session) (string, error) {
+	return "renewed-session", nil
+}
 
 func TestAuthenticatedRouterLoginCSRF(t *testing.T) {
 	pages := template.Must(template.New("login.html").Parse(`<form><input name="csrf_token" value="{{.CSRF}}"></form>`))

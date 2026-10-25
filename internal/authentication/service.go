@@ -27,6 +27,7 @@ type Session struct {
 	ID                string
 	User              domain.User
 	CSRFToken         string
+	AbsoluteExpiresAt time.Time
 	Previous          bool
 	RotatedIdentifier string
 }
@@ -45,6 +46,7 @@ type Store interface {
 	CreateSession(ctx context.Context, session NewSession) error
 	ValidateSession(ctx context.Context, hash, replacementHash []byte, now time.Time) (Session, bool, error)
 	RevokeSession(ctx context.Context, hash []byte, now time.Time) error
+	RevokeSessionByID(ctx context.Context, sessionID string, now time.Time) error
 }
 
 type Service struct {
@@ -95,6 +97,11 @@ func (s *Service) Login(ctx context.Context, username, password string) (string,
 	if !VerifyPassword(user.PasswordHash, password) {
 		return "", ErrInvalidCredentials
 	}
+	now := s.now().UTC()
+	return s.issueSession(ctx, user.ID, now, now.Add(AbsoluteLifetime))
+}
+
+func (s *Service) issueSession(ctx context.Context, userID int64, now, absoluteExpiresAt time.Time) (string, error) {
 	id, err := token(16)
 	if err != nil {
 		return "", err
@@ -107,12 +114,22 @@ func (s *Service) Login(ctx context.Context, username, password string) (string,
 	if err != nil {
 		return "", err
 	}
-	now := s.now().UTC()
-	err = s.store.CreateSession(ctx, NewSession{ID: id, UserID: user.ID, IdentifierHash: hashIdentifier(identifier), CSRFToken: csrf, CreatedAt: now, AbsoluteExpiresAt: now.Add(AbsoluteLifetime)})
+	err = s.store.CreateSession(ctx, NewSession{ID: id, UserID: userID, IdentifierHash: hashIdentifier(identifier), CSRFToken: csrf, CreatedAt: now, AbsoluteExpiresAt: absoluteExpiresAt})
 	if err != nil {
 		return "", err
 	}
 	return identifier, nil
+}
+
+func (s *Service) RenewAfterPrivilegeChange(ctx context.Context, session Session) (string, error) {
+	now := s.now().UTC()
+	if session.ID == "" || session.User.ID <= 0 || !session.User.IsActive || session.AbsoluteExpiresAt.IsZero() || !now.Before(session.AbsoluteExpiresAt) {
+		return "", ErrUnauthenticated
+	}
+	if err := s.store.RevokeSessionByID(ctx, session.ID, now); err != nil {
+		return "", err
+	}
+	return s.issueSession(ctx, session.User.ID, now, session.AbsoluteExpiresAt)
 }
 
 func (s *Service) Validate(ctx context.Context, identifier string) (Session, error) {

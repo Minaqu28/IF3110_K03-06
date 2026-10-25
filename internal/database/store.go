@@ -105,10 +105,11 @@ func (this *PostgresStore) ValidateSession(ctx context.Context, hash, replacemen
 	}
 	user.PasswordHash = ""
 	return authentication.Session{
-		ID:        sessionID,
-		User:      user,
-		CSRFToken: csrf,
-		Previous:  state.MatchedPrevious,
+		ID:                sessionID,
+		User:              user,
+		CSRFToken:         csrf,
+		AbsoluteExpiresAt: state.AbsoluteExpiresAt,
+		Previous:          state.MatchedPrevious,
 	}, rotated, nil
 }
 func (this *PostgresStore) RevokeSession(ctx context.Context, hash []byte, now time.Time) error {
@@ -117,5 +118,12 @@ func (this *PostgresStore) RevokeSession(ctx context.Context, hash []byte, now t
 	WHERE (identifier_hash = $1 OR (previous_hash = $1 AND previous_valid_until > $2))
 	  AND revoked_at IS NULL`,
 		hash, now)
+	return err
+}
+
+func (this *PostgresStore) RevokeSessionByID(ctx context.Context, sessionID string, now time.Time) error {
+	_, err := this.db.ExecContext(ctx,
+		`UPDATE sessions SET revoked_at = $2 WHERE id = $1 AND revoked_at IS NULL`,
+		sessionID, now)
 	return err
 }

@@ -480,6 +480,63 @@ func TestAdminAuthorizationAndHTTPPostgres(t *testing.T) {
 	if got := request(http.MethodPost, "/admin/groups", adminID, url.Values{"name": {"editors"}, "csrf_token": {adminSession.CSRFToken}}).Code; got != http.StatusSeeOther {
 		t.Fatalf("admin create group status: %d", got)
 	}
+	var selfGroupID int64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM groups WHERE name = 'editors'`).Scan(&selfGroupID); err != nil {
+		t.Fatal(err)
+	}
+	selfMembership := request(http.MethodPost, "/admin/memberships", adminID, url.Values{
+		"action": {"add"}, "group_id": {fmt.Sprint(selfGroupID)}, "user_id": {fmt.Sprint(adminUser.ID)}, "csrf_token": {adminSession.CSRFToken},
+	})
+	if selfMembership.Code != http.StatusSeeOther || selfMembership.Header().Get("Location") != "/admin" {
+		t.Fatalf("self membership status=%d location=%q", selfMembership.Code, selfMembership.Header().Get("Location"))
+	}
+	var renewedAdminID string
+	for _, cookie := range selfMembership.Result().Cookies() {
+		if cookie.Name == "cookie_session" && cookie.MaxAge >= 0 {
+			renewedAdminID = cookie.Value
+		}
+	}
+	if renewedAdminID == "" || renewedAdminID == adminID {
+		t.Fatalf("self membership did not issue a replacement session")
+	}
+	if _, err := auth.Validate(ctx, adminID); !errors.Is(err, authentication.ErrUnauthenticated) {
+		t.Fatalf("old admin identifier survived self membership: %v", err)
+	}
+	adminID = renewedAdminID
+	adminSession, err = auth.Validate(ctx, adminID)
+	if err != nil {
+		t.Fatalf("replacement admin session invalid: %v", err)
+	}
+	if got := request(http.MethodGet, "/admin", adminID, nil).Code; got != http.StatusOK {
+		t.Fatalf("admin page after self membership status=%d", got)
+	}
+	selfGrant := request(http.MethodPost, "/admin/grants", adminID, url.Values{
+		"action": {"grant"}, "group_id": {fmt.Sprint(selfGroupID)}, "database_id": {fmt.Sprint(allowed.ID)},
+		"level": {string(authorization.AccessViewEdit)}, "csrf_token": {adminSession.CSRFToken},
+	})
+	if selfGrant.Code != http.StatusSeeOther || selfGrant.Header().Get("Location") != "/admin" {
+		t.Fatalf("self group grant status=%d location=%q", selfGrant.Code, selfGrant.Header().Get("Location"))
+	}
+	renewedAdminID = ""
+	for _, cookie := range selfGrant.Result().Cookies() {
+		if cookie.Name == "cookie_session" && cookie.MaxAge >= 0 {
+			renewedAdminID = cookie.Value
+		}
+	}
+	if renewedAdminID == "" || renewedAdminID == adminID {
+		t.Fatalf("self group grant did not issue a replacement session")
+	}
+	if _, err := auth.Validate(ctx, adminID); !errors.Is(err, authentication.ErrUnauthenticated) {
+		t.Fatalf("old admin identifier survived self group grant: %v", err)
+	}
+	adminID = renewedAdminID
+	adminSession, err = auth.Validate(ctx, adminID)
+	if err != nil {
+		t.Fatalf("replacement session after self group grant invalid: %v", err)
+	}
+	if got := request(http.MethodGet, "/admin", adminID, nil).Code; got != http.StatusOK {
+		t.Fatalf("admin page after self group grant status=%d", got)
+	}
 	if got := request(http.MethodGet, fmt.Sprintf("/databases/%d", denied.ID), viewerID, nil).Code; got != http.StatusForbidden {
 		t.Fatalf("cross-target HTTP status: %d", got)
 	}
@@ -591,11 +648,23 @@ func TestAdminAuthorizationAndHTTPPostgres(t *testing.T) {
 	reset := request(http.MethodPost, "/admin/users/password", adminID, url.Values{
 		"user_id": {fmt.Sprint(adminUser.ID)}, "password": {"root-new-password"}, "csrf_token": {adminSession.CSRFToken},
 	})
-	if reset.Code != http.StatusSeeOther || reset.Header().Get("Location") != "/login" {
-		t.Fatalf("self password reset did not redirect to login: %d", reset.Code)
+	if reset.Code != http.StatusSeeOther || reset.Header().Get("Location") != "/admin" {
+		t.Fatalf("self password reset status=%d location=%q", reset.Code, reset.Header().Get("Location"))
 	}
 	if _, err := auth.Validate(ctx, adminID); !errors.Is(err, authentication.ErrUnauthenticated) {
-		t.Fatalf("self password reset did not revoke session: %v", err)
+		t.Fatalf("old session survived self password reset: %v", err)
+	}
+	renewedAdminID = ""
+	for _, cookie := range reset.Result().Cookies() {
+		if cookie.Name == "cookie_session" && cookie.MaxAge >= 0 {
+			renewedAdminID = cookie.Value
+		}
+	}
+	if renewedAdminID == "" || renewedAdminID == adminID {
+		t.Fatal("self password reset did not issue a replacement session")
+	}
+	if _, err := auth.Validate(ctx, renewedAdminID); err != nil {
+		t.Fatalf("replacement session after self password reset invalid: %v", err)
 	}
 	if _, err := auth.Login(ctx, "root", "root-new-password"); err != nil {
 		t.Fatalf("new admin password rejected: %v", err)

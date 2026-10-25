@@ -21,6 +21,7 @@ type fakeStore struct {
 	validateErr   error
 	gotReplace    []byte
 	revoked       [][]byte
+	revokedIDs    []string
 }
 
 func (f *fakeStore) FindUser(context.Context, string) (domain.User, error) { return f.user, f.findErr }
@@ -35,6 +36,10 @@ func (f *fakeStore) ValidateSession(_ context.Context, _, replacement []byte, _ 
 }
 func (f *fakeStore) RevokeSession(_ context.Context, hash []byte, _ time.Time) error {
 	f.revoked = append(f.revoked, hash)
+	return nil
+}
+func (f *fakeStore) RevokeSessionByID(_ context.Context, sessionID string, _ time.Time) error {
+	f.revokedIDs = append(f.revokedIDs, sessionID)
 	return nil
 }
 
@@ -75,6 +80,43 @@ func TestLoginCreatesOpaqueSessionWithAbsoluteExpiry(t *testing.T) {
 	}
 	if s.CSRFToken == "" {
 		t.Error("session needs a CSRF token")
+	}
+}
+
+func TestRenewAfterPrivilegeChangePreservesAbsoluteExpiry(t *testing.T) {
+	now := time.Date(2026, 3, 1, 8, 0, 0, 0, time.UTC)
+	absolute := now.Add(2 * time.Hour)
+	store := &fakeStore{}
+	svc := NewService(store, func() time.Time { return now })
+
+	identifier, err := svc.RenewAfterPrivilegeChange(context.Background(), Session{
+		ID:                "old-session",
+		User:              domain.User{ID: 4, IsActive: true},
+		AbsoluteExpiresAt: absolute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(identifier) != 43 || len(store.created) != 1 {
+		t.Fatalf("identifier length=%d created=%d", len(identifier), len(store.created))
+	}
+	if len(store.revokedIDs) != 1 || store.revokedIDs[0] != "old-session" {
+		t.Fatalf("revoked session IDs = %v", store.revokedIDs)
+	}
+	created := store.created[0]
+	if created.UserID != 4 || !created.CreatedAt.Equal(now) || !created.AbsoluteExpiresAt.Equal(absolute) {
+		t.Fatalf("renewed session = %+v", created)
+	}
+	if !bytes.Equal(created.IdentifierHash, hashIdentifier(identifier)) {
+		t.Fatal("renewed identifier was not stored by hash")
+	}
+
+	if _, err := svc.RenewAfterPrivilegeChange(context.Background(), Session{
+		ID:                "expired-session",
+		User:              domain.User{ID: 4, IsActive: true},
+		AbsoluteExpiresAt: now,
+	}); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("expired renewal err=%v, want ErrUnauthenticated", err)
 	}
 }
 

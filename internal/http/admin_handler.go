@@ -131,8 +131,7 @@ func (h *AdminHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		Username: r.PostForm.Get("username"), IsAdmin: r.PostForm.Get("is_admin") == "on",
 	})
 	if err == nil && id == session.User.ID {
-		h.auth.clearCookie(w, sessionCookie, "/")
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		h.resultWithRenewedSession(w, r, session, nil)
 		return
 	}
 	adminResult(w, r, err)
@@ -150,8 +149,7 @@ func (h *AdminHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	err = h.service.ResetPassword(r.Context(), session.User, id, r.PostForm.Get("password"))
 	if err == nil && id == session.User.ID {
-		h.auth.clearCookie(w, sessionCookie, "/")
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		h.resultWithRenewedSession(w, r, session, nil)
 		return
 	}
 	adminResult(w, r, err)
@@ -202,7 +200,7 @@ func (h *AdminHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 		adminHTTPError(w, err)
 		return
 	}
-	adminResult(w, r, h.service.DeleteGroup(r.Context(), session.User, id))
+	h.resultWithRenewedSession(w, r, session, h.service.DeleteGroup(r.Context(), session.User, id))
 }
 
 func (h *AdminHandler) Membership(w http.ResponseWriter, r *http.Request) {
@@ -224,6 +222,10 @@ func (h *AdminHandler) Membership(w http.ResponseWriter, r *http.Request) {
 		err = h.service.RemoveMember(r.Context(), session.User, groupID, userID)
 	default:
 		err = admin.ErrInvalidInput
+	}
+	if err == nil && userID == session.User.ID {
+		h.resultWithRenewedSession(w, r, session, nil)
+		return
 	}
 	adminResult(w, r, err)
 }
@@ -266,7 +268,7 @@ func (h *AdminHandler) UpdateConnection(w http.ResponseWriter, r *http.Request) 
 		},
 		Password: r.PostForm.Get("password"),
 	})
-	adminResult(w, r, err)
+	h.resultWithRenewedSession(w, r, session, err)
 }
 
 func (h *AdminHandler) DeleteConnection(w http.ResponseWriter, r *http.Request) {
@@ -279,7 +281,7 @@ func (h *AdminHandler) DeleteConnection(w http.ResponseWriter, r *http.Request) 
 		adminHTTPError(w, err)
 		return
 	}
-	adminResult(w, r, h.service.DeleteConnection(r.Context(), session.User, id))
+	h.resultWithRenewedSession(w, r, session, h.service.DeleteConnection(r.Context(), session.User, id))
 }
 
 func (h *AdminHandler) Grant(w http.ResponseWriter, r *http.Request) {
@@ -302,7 +304,23 @@ func (h *AdminHandler) Grant(w http.ResponseWriter, r *http.Request) {
 	default:
 		err = admin.ErrInvalidInput
 	}
-	adminResult(w, r, err)
+	h.resultWithRenewedSession(w, r, session, err)
+}
+
+// resultWithRenewedSession rotates the actor's session after an operation that
+// can revoke or change their effective privileges. This keeps the browser on
+// the admin page without leaving the pre-change identifier active.
+func (h *AdminHandler) resultWithRenewedSession(w http.ResponseWriter, r *http.Request, session authentication.Session, err error) {
+	if err != nil {
+		adminHTTPError(w, err)
+		return
+	}
+	if err := h.auth.renewAfterPrivilegeChange(w, r, session); err != nil {
+		h.auth.clearCookie(w, sessionCookie, "/")
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
 func (h *AdminHandler) ListDatabases(w http.ResponseWriter, r *http.Request) {

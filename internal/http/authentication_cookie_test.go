@@ -35,6 +35,9 @@ func (s *scriptedAuth) Logout(_ context.Context, id string) error {
 	s.loggedOut = append(s.loggedOut, id)
 	return nil
 }
+func (s *scriptedAuth) RenewAfterPrivilegeChange(context.Context, authentication.Session) (string, error) {
+	return "renewed-session", nil
+}
 
 var cookieTestPages = template.Must(template.New("login.html").Parse(
 	`{{define "login.html"}}<input name="csrf_token" value="{{.CSRF}}">{{.Message}}{{end}}` +

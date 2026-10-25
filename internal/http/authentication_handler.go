@@ -21,6 +21,7 @@ type AuthenticationService interface {
 	Login(context.Context, string, string) (string, error)
 	Validate(context.Context, string) (authentication.Session, error)
 	Logout(context.Context, string) error
+	RenewAfterPrivilegeChange(context.Context, authentication.Session) (string, error)
 }
 
 type AuthenticationHandler struct {
@@ -169,6 +170,15 @@ func (h *AuthenticationHandler) setCookie(w http.ResponseWriter, name, value, pa
 
 func (h *AuthenticationHandler) clearCookie(w http.ResponseWriter, name, path string) {
 	http.SetCookie(w, &http.Cookie{Name: name, Path: path, MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: h.secureCookies})
+}
+
+func (h *AuthenticationHandler) renewAfterPrivilegeChange(w http.ResponseWriter, r *http.Request, session authentication.Session) error {
+	identifier, err := h.service.RenewAfterPrivilegeChange(r.Context(), session)
+	if err != nil {
+		return err
+	}
+	h.setCookie(w, sessionCookie, identifier, "/", 0)
+	return nil
 }
 
 func (h *AuthenticationHandler) newLoginCSRF() (string, error) {
