@@ -1,4 +1,5 @@
-// Package explorer implements the per-database table viewer, SQL editor, and migration manager.
+// Package explorer implements the per-database table viewer, SQL editor,
+// execution plan analyzer, and migration manager.
 // It enforces access levels: VIEW_ONLY may only read and view migration history/details,
 // while VIEW_EDIT may mutate and create, edit, and execute migrations.
 package explorer
@@ -231,6 +232,9 @@ type View struct {
 	Changes           []ChangeLog
 	SQL               string
 	Results           []StatementResult
+	PlanSQL           string
+	PlanMode          string
+	Plan              *ExecutionPlan
 	Error             string
 }
 

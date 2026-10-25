@@ -57,6 +57,21 @@ func (f fakeTarget) Run(_ context.Context, sql string, _ int) []explorer.Stateme
 	*f.ran = append(*f.ran, sql)
 	return []explorer.StatementResult{{Command: "EXECUTED"}}
 }
+func (f fakeTarget) Explain(_ context.Context, query string, analyze bool) (explorer.ExecutionPlan, error) {
+	mode := explorer.PlanModeEstimate
+	if analyze {
+		mode = explorer.PlanModeAnalyze
+	}
+	*f.ran = append(*f.ran, "PLAN "+mode+" "+query)
+	return explorer.ExecutionPlan{
+		PlanningTimeMs: 0.12,
+		Root: explorer.PlanNode{
+			NodeType:     "Seq Scan",
+			RelationName: "users",
+			PlanRows:     2,
+		},
+	}, nil
+}
 func (f fakeTarget) Close(context.Context) error { return nil }
 
 type fakeStore struct {
@@ -258,6 +273,43 @@ func TestExecuteEmptySQL(t *testing.T) {
 	rec := do(router, http.MethodPost, "/databases/1/query", query("   ", testCSRF), true)
 	if len(store.ran) != 0 || !strings.Contains(rec.Body.String(), "SQL tidak boleh kosong") {
 		t.Fatalf("ran = %v, want empty-SQL error", store.ran)
+	}
+}
+
+func TestExplainRouteForViewOnly(t *testing.T) {
+	router, store := newTestRouter(t, activeSession())
+	form := url.Values{
+		"plan_sql":   {"SELECT * FROM users"},
+		"mode":       {explorer.PlanModeEstimate},
+		"csrf_token": {testCSRF},
+	}
+	rec := do(router, http.MethodPost, "/databases/2/explain", form, true)
+	if rec.Code != http.StatusOK || len(store.ran) != 1 || store.ran[0] != "PLAN estimate SELECT * FROM users" {
+		t.Fatalf("status = %d, ran = %v", rec.Code, store.ran)
+	}
+	for _, want := range []string{"Estimated Execution Plan", "Seq Scan", "users"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("plan page missing %q", want)
+		}
+	}
+}
+
+func TestExplainRouteRejectsCSRFAndMutation(t *testing.T) {
+	router, store := newTestRouter(t, activeSession())
+	wrongCSRF := url.Values{"plan_sql": {"SELECT 1"}, "mode": {explorer.PlanModeEstimate}, "csrf_token": {"wrong"}}
+	if rec := do(router, http.MethodPost, "/databases/2/explain", wrongCSRF, true); rec.Code != http.StatusForbidden {
+		t.Fatalf("wrong CSRF status = %d, want 403", rec.Code)
+	}
+	mutation := url.Values{"plan_sql": {"DELETE FROM users"}, "mode": {explorer.PlanModeAnalyze}, "csrf_token": {testCSRF}}
+	if rec := do(router, http.MethodPost, "/databases/2/explain", mutation, true); rec.Code != http.StatusBadRequest {
+		t.Fatalf("mutation status = %d, want 400", rec.Code)
+	}
+	crossTarget := url.Values{"plan_sql": {"SELECT 1"}, "mode": {explorer.PlanModeEstimate}, "csrf_token": {testCSRF}}
+	if rec := do(router, http.MethodPost, "/databases/99/explain", crossTarget, true); rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-target status = %d, want 403", rec.Code)
+	}
+	if len(store.ran) != 0 {
+		t.Fatalf("invalid plan query ran: %v", store.ran)
 	}
 }
 

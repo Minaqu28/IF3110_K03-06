@@ -154,6 +154,20 @@ func TestTargetIntegration(t *testing.T) {
 	if !strings.HasPrefix(ro.Run(ctx, "SELECT 1", 10)[0].Command, "SELECT") {
 		t.Fatal("unexpected command tag")
 	}
+	estimated, err := ro.Explain(ctx, "SELECT * FROM explorer_it WHERE id = 1", false)
+	if err != nil || estimated.Root.NodeType == "" || estimated.Root.ActualRows != nil {
+		t.Fatalf("estimated plan = %+v, err = %v", estimated, err)
+	}
+	actual, err := ro.Explain(ctx, "SELECT * FROM explorer_it WHERE id = 1", true)
+	if err != nil || actual.Root.NodeType == "" || actual.Root.ActualRows == nil {
+		t.Fatalf("actual plan = %+v, err = %v", actual, err)
+	}
+	if _, err := ro.Explain(ctx, "DELETE FROM explorer_it", true); err == nil {
+		t.Fatal("EXPLAIN ANALYZE mutation should fail in a read-only session")
+	}
+	if _, err := edit.Explain(ctx, "SELECT 1", false); err == nil {
+		t.Fatal("execution plan should require a read-only target")
+	}
 	edit.Run(ctx, "DROP TABLE explorer_it", 10)
 }
 

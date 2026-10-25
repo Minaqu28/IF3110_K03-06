@@ -118,6 +118,9 @@ func (h *DatabaseHandler) renderViewOrError(w http.ResponseWriter, session authe
 	if errors.Is(err, explorer.ErrAuditFailed) {
 		status, err = http.StatusInternalServerError, nil
 	}
+	if errors.Is(err, explorer.ErrInvalidPlanQuery) {
+		status, err = http.StatusBadRequest, nil
+	}
 	if err != nil {
 		adminHTTPError(w, err)
 		return
@@ -139,6 +142,17 @@ func (h *DatabaseHandler) redirectMigration(w http.ResponseWriter, r *http.Reque
 	}
 	http.Redirect(w, r, fmt.Sprintf("/databases/%d?migration=%d", view.Connection.ID, view.SelectedMigration.Version), http.StatusSeeOther)
 	return true
+}
+
+func (h *DatabaseHandler) Explain(w http.ResponseWriter, r *http.Request) {
+	session, id, ok := h.requireMutationForm(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), databaseRequestTimeout)
+	defer cancel()
+	view, err := h.service.Explain(ctx, session.User, id, r.PostForm.Get("plan_sql"), r.PostForm.Get("mode"))
+	h.renderViewOrError(w, session, view, err)
 }
 
 // Execute handles POST /databases/{id}/query.

@@ -58,6 +58,38 @@
             </section>
             {{end}}
 
+            <section class="panel">
+                <h2>Execution Plan Analysis</h2>
+                <form method="post" action="/databases/{{.Connection.ID}}/explain">
+                    <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
+                    <label>Query SELECT</label>
+                    <textarea name="plan_sql" rows="6" spellcheck="false" required placeholder="SELECT * FROM public.products WHERE price &gt; 100000;">{{.PlanSQL}}</textarea>
+                    <p>
+                        <button type="submit" name="mode" value="estimate">Estimate Plan</button>
+                        <button type="submit" name="mode" value="analyze">Analyze &amp; Measure</button>
+                    </p>
+                    <small>Estimate hanya menyusun rencana. Analyze menjalankan query pada koneksi read-only untuk mengukur waktu dan buffer aktual.</small>
+                </form>
+            </section>
+
+            {{with .Plan}}
+            <section class="panel plan-result">
+                <h2>{{if .Analyze}}Actual Execution Plan{{else}}Estimated Execution Plan{{end}}</h2>
+                <dl class="meta">
+                    <dt>Planning time</dt><dd>{{printf "%.3f" .PlanningTimeMs}} ms</dd>
+                    {{if .Analyze}}<dt>Execution time</dt><dd>{{printf "%.3f" .ExecutionTimeMs}} ms</dd>{{end}}
+                    <dt>Plan nodes</dt><dd>{{.NodeCount}}</dd>
+                </dl>
+                {{if .Warnings}}
+                <div class="plan-warnings">
+                    <h3>Hal yang perlu diperiksa</h3>
+                    <ul>{{range .Warnings}}<li>{{.}}</li>{{end}}</ul>
+                </div>
+                {{end}}
+                <ol class="plan-tree">{{template "plan-node" .Root}}</ol>
+            </section>
+            {{end}}
+
             {{if eq .Level "VIEW_EDIT"}}
             <section class="panel">
                 <h2>SQL Editor</h2>
@@ -212,4 +244,32 @@
 </div>
 {{if .Truncated}}<p><small>Hasil dibatasi hingga {{len .Rows}} baris pada tampilan ini.</small></p>{{end}}
 {{end}}
+{{end}}
+
+{{define "plan-node"}}
+<li>
+    <article class="plan-node">
+        <header>
+            <strong>{{.NodeType}}</strong>
+            {{if .RelationName}} <code>{{.RelationName}}</code>{{end}}
+            {{if .IndexName}} via <code>{{.IndexName}}</code>{{end}}
+            {{if .JoinType}} <small>({{.JoinType}})</small>{{end}}
+        </header>
+        <div class="plan-metrics">
+            <span>cost {{printf "%.2f" .StartupCost}}..{{printf "%.2f" .TotalCost}}</span>
+            <span>estimated rows {{.PlanRows}}</span>
+            <span>width {{.PlanWidth}}</span>
+            {{with .ActualTotalTime}}<span>actual time {{.}} ms</span>{{end}}
+            {{with .ActualRows}}<span>actual rows {{.}}</span>{{end}}
+            {{with .ActualLoops}}<span>loops {{.}}</span>{{end}}
+            {{if or .SharedHitBlocks .SharedReadBlocks}}<span>buffers hit/read {{.SharedHitBlocks}}/{{.SharedReadBlocks}}</span>{{end}}
+            {{if .RowsRemovedByFilter}}<span>rows removed {{.RowsRemovedByFilter}}</span>{{end}}
+        </div>
+        {{if .IndexCond}}<p><small>Index condition:</small> <code>{{.IndexCond}}</code></p>{{end}}
+        {{if .Filter}}<p><small>Filter:</small> <code>{{.Filter}}</code></p>{{end}}
+        {{if .HashCond}}<p><small>Hash condition:</small> <code>{{.HashCond}}</code></p>{{end}}
+        {{if .JoinFilter}}<p><small>Join filter:</small> <code>{{.JoinFilter}}</code></p>{{end}}
+    </article>
+    {{if .Plans}}<ol>{{range .Plans}}{{template "plan-node" .}}{{end}}</ol>{{end}}
+</li>
 {{end}}

@@ -49,6 +49,23 @@ func TestSplitStatements(t *testing.T) {
 	}
 }
 
+func TestIsExplainableQuery(t *testing.T) {
+	cases := map[string]bool{
+		"SELECT * FROM products": true,
+		"-- report\nWITH expensive AS (SELECT 1) SELECT * FROM expensive;": true,
+		"SELECT ';' AS value":           true,
+		"EXPLAIN SELECT 1":              false,
+		"UPDATE products SET price = 0": false,
+		"SELECT 1; SELECT 2":            false,
+		"":                              false,
+	}
+	for query, want := range cases {
+		if got := IsExplainableQuery(query); got != want {
+			t.Errorf("IsExplainableQuery(%q) = %v, want %v", query, got, want)
+		}
+	}
+}
+
 type fakeAccess struct {
 	level authorization.AccessLevel
 	err   error
@@ -62,6 +79,7 @@ type fakeTarget struct {
 	ran     []string
 	txStmts [][]string
 	failIdx int
+	plans   []ExecutionPlan
 }
 
 func (f *fakeTarget) Tables(context.Context) ([]Table, error) { return []Table{{Name: "t"}}, nil }
@@ -83,6 +101,20 @@ func (f *fakeTarget) RunInTx(_ context.Context, stmts []string, _ int) []Stateme
 		out = append(out, StatementResult{Command: "OK"})
 	}
 	return out
+}
+func (f *fakeTarget) Explain(_ context.Context, query string, analyze bool) (ExecutionPlan, error) {
+	f.ran = append(f.ran, query)
+	actualRows := 1000.0
+	plan := ExecutionPlan{Root: PlanNode{
+		NodeType:     "Seq Scan",
+		RelationName: "products",
+		PlanRows:     10,
+	}}
+	if analyze {
+		plan.Root.ActualRows = &actualRows
+	}
+	f.plans = append(f.plans, plan)
+	return plan, nil
 }
 func (f *fakeTarget) Close(context.Context) error { return nil }
 
@@ -189,6 +221,42 @@ func TestExecuteViewOnlySelectUsesReadOnlySession(t *testing.T) {
 	}
 	if len(store.recorded) != 0 {
 		t.Fatal("read query must not be recorded as migration")
+	}
+}
+
+func TestExplainViewOnlyUsesReadOnlyTarget(t *testing.T) {
+	target := &fakeTarget{}
+	store := &fakeStore{target: target}
+	svc := NewService(fakeAccess{level: authorization.AccessViewOnly}, store)
+	view, err := svc.Explain(context.Background(), domain.User{ID: 1, IsActive: true}, 1, "SELECT * FROM products", PlanModeAnalyze)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.readOnly) != 1 || !store.readOnly[0] {
+		t.Fatalf("readOnly = %v, want [true]", store.readOnly)
+	}
+	if len(target.ran) != 1 || target.ran[0] != "SELECT * FROM products" {
+		t.Fatalf("planned queries = %v", target.ran)
+	}
+	if view.Plan == nil || !view.Plan.Analyze || view.Plan.NodeCount != 1 || len(view.Plan.Warnings) != 2 {
+		t.Fatalf("plan summary = %+v", view.Plan)
+	}
+}
+
+func TestExplainRejectsMutationBeforeOpeningTarget(t *testing.T) {
+	store := &fakeStore{target: &fakeTarget{}}
+	svc := NewService(fakeAccess{level: authorization.AccessViewEdit}, store)
+	view, err := svc.Explain(context.Background(), domain.User{ID: 1, IsActive: true}, 1, "DELETE FROM products", PlanModeEstimate)
+	if !errors.Is(err, ErrInvalidPlanQuery) || !strings.Contains(view.Error, "SELECT") {
+		t.Fatalf("view error = %q, err = %v", view.Error, err)
+	}
+	if len(store.readOnly) != 1 {
+		// reload opens one read-only target to rebuild the database page; the
+		// submitted mutation itself must never reach Target.Explain.
+		t.Fatalf("reload opens = %v, want one read-only reload", store.readOnly)
+	}
+	if len(store.target.ran) != 0 {
+		t.Fatalf("mutation reached target: %v", store.target.ran)
 	}
 }
 

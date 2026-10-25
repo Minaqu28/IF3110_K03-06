@@ -52,6 +52,7 @@ func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHan
 	if databaseHandler != nil {
 		mux.HandleFunc("GET /databases/{id}", databaseHandler.Show)
 		mux.HandleFunc("POST /databases/{id}/query", databaseHandler.Execute)
+		mux.HandleFunc("POST /databases/{id}/explain", databaseHandler.Explain)
 		mux.HandleFunc("POST /databases/{id}/migrations/preview", databaseHandler.PreviewMigration)
 		mux.HandleFunc("POST /databases/{id}/migrations", databaseHandler.CreateMigration)
 		mux.HandleFunc("POST /databases/{id}/migrations/{version}/update", databaseHandler.UpdateMigration)

@@ -805,6 +805,27 @@ func TestExplorerEndToEndPostgres(t *testing.T) {
 	if got := request(http.MethodPost, path+"/migrations", identifier, failedForm).Code; got != http.StatusForbidden {
 		t.Fatalf("VIEW_ONLY created migration: status=%d", got)
 	}
+	planForm := url.Values{
+		"plan_sql":   {"SELECT * FROM " + qualified + " WHERE id = 1"},
+		"mode":       {explorer.PlanModeAnalyze},
+		"csrf_token": {session.CSRFToken},
+	}
+	planResponse := request(http.MethodPost, path+"/explain", identifier, planForm)
+	if planResponse.Code != http.StatusOK || !strings.Contains(planResponse.Body.String(), "Actual Execution Plan") || !strings.Contains(planResponse.Body.String(), "actual rows") {
+		t.Fatalf("VIEW_ONLY actual plan status=%d body=%q", planResponse.Code, planResponse.Body.String())
+	}
+	var beforeRejectedPlan int
+	if err := target.QueryRow(ctx, `SELECT count(*) FROM `+qualified).Scan(&beforeRejectedPlan); err != nil {
+		t.Fatal(err)
+	}
+	planForm.Set("plan_sql", "DELETE FROM "+qualified)
+	if got := request(http.MethodPost, path+"/explain", identifier, planForm).Code; got != http.StatusBadRequest {
+		t.Fatalf("mutation plan status=%d, want 400", got)
+	}
+	var afterRejectedPlan int
+	if err := target.QueryRow(ctx, `SELECT count(*) FROM `+qualified).Scan(&afterRejectedPlan); err != nil || afterRejectedPlan != beforeRejectedPlan {
+		t.Fatalf("rejected plan changed target: before=%d after=%d err=%v", beforeRejectedPlan, afterRejectedPlan, err)
+	}
 }
 
 func TestMigrationAttemptLifecyclePostgres(t *testing.T) {

@@ -28,6 +28,11 @@ func renderDatabasePage(t *testing.T, level authorization.AccessLevel) string {
 		Table:      "users",
 		Preview:    &result,
 		Results:    []explorer.StatementResult{result, {Error: "ERROR: boom"}},
+		PlanSQL:    "SELECT * FROM users",
+		Plan: &explorer.ExecutionPlan{
+			NodeCount: 1,
+			Root:      explorer.PlanNode{NodeType: "Index Scan", RelationName: "users", IndexName: "users_pkey", PlanRows: 1},
+		},
 	}
 	var body bytes.Buffer
 	data := databasePage{Session: authentication.Session{CSRFToken: "tok"}, View: view}
@@ -39,12 +44,12 @@ func renderDatabasePage(t *testing.T, level authorization.AccessLevel) string {
 
 func TestDatabasePageEditorOnlyForViewEdit(t *testing.T) {
 	edit := renderDatabasePage(t, authorization.AccessViewEdit)
-	for _, want := range []string{`name="sql"`, `value="tok"`, "/databases/3?schema=public&amp;table=users", "NULL", "ERROR: boom"} {
+	for _, want := range []string{`name="sql"`, `name="plan_sql"`, `value="tok"`, "/databases/3?schema=public&amp;table=users", "NULL", "ERROR: boom", "Index Scan", "users_pkey"} {
 		if !strings.Contains(edit, want) {
 			t.Errorf("VIEW_EDIT page missing %q", want)
 		}
 	}
-	if view := renderDatabasePage(t, authorization.AccessViewOnly); strings.Contains(view, `name="sql"`) {
-		t.Error("VIEW_ONLY page must not render the SQL editor")
+	if view := renderDatabasePage(t, authorization.AccessViewOnly); strings.Contains(view, `name="sql"`) || !strings.Contains(view, `name="plan_sql"`) {
+		t.Error("VIEW_ONLY must see the plan analyzer but not the SQL editor")
 	}
 }
