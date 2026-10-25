@@ -10,7 +10,7 @@
         <main class="card">
             <h1>Dashboard</h1>
             <p>Halo, {{.User.Username}}.</p>
-            <p><a href="/databases">Database saya</a>{{if .User.IsPlatformAdmin}} · <a href="/admin">Administrasi Platform</a>{{end}}</p>
+            <p><a href="/databases">Database saya</a>{{if .User.IsPlatformAdmin}} · <a href="/admin">Platform Admin</a>{{end}}</p>
             <form method="post" action="/logout">
                 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
                 <button type="submit">Keluar</button>

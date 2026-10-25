@@ -262,3 +262,26 @@ table.result th {
     top: 0;
     background: #fff;
 }
+
+/* Connection header card on the database page */
+.connection-header {
+    display: grid;
+    gap: 1rem;
+}
+.connection-header h1,
+.connection-header .error {
+    margin: 0;
+}
+.connection-header .meta {
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: 1rem 1.5rem;
+    margin: 0;
+}
+.connection-header .meta > div {
+    display: grid;
+    gap: .15rem;
+    min-width: 0;
+}
+.connection-header .meta dd {
+    overflow-wrap: anywhere;
+}

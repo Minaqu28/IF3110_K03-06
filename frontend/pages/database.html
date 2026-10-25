@@ -2,11 +2,16 @@
 <html lang="id">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{.Connection.Name}} · Database</title><link rel="stylesheet" href="/static/style.css"></head>
 <body><main class="admin-layout">
-    <nav><a href="/databases">Database saya</a></nav>
     <nav class="nav-grid"><a href="/databases">&lt; Database saya</a></nav>
-    <h1>{{.Connection.Name}}</h1>
-    <dl class="meta"><dt>Database</dt><dd>{{.Connection.DBname}}</dd><dt>Host</dt><dd>{{.Connection.Host}}:{{.Connection.Port}}</dd><dt>Izin</dt><dd>{{.Level}}</dd></dl>
-    {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+    <section class="panel connection-header">
+        <h1>{{.Connection.Name}}</h1>
+        <dl class="meta">
+            <div><dt>Database</dt><dd>{{.Connection.DBname}}</dd></div>
+            <div><dt>Host</dt><dd>{{.Connection.Host}}:{{.Connection.Port}}</dd></div>
+            <div><dt>Izin</dt><dd>{{.Level}}</dd></div>
+        </dl>
+        {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+    </section>
 
     <div class="explorer">
         <section class="panel table-list">
