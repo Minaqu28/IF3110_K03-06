@@ -57,6 +57,7 @@ CREATE TABLE sessions (
     user_id             BIGINT      NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     identifier_hash     BYTEA       NOT NULL UNIQUE,
     previous_hash       BYTEA       UNIQUE,            -- identifier sebelum rotation (grace period)
+    previous_valid_until TIMESTAMPTZ,
     csrf_token          TEXT        NOT NULL,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     rotated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -65,6 +66,7 @@ CREATE TABLE sessions (
     revoked_at          TIMESTAMPTZ,
     CONSTRAINT sessions_identifier_hash_len CHECK (octet_length(identifier_hash) = 32),
     CONSTRAINT sessions_previous_hash_len   CHECK (previous_hash IS NULL OR octet_length(previous_hash) = 32),
+    CONSTRAINT sessions_previous_expiry_pair CHECK ((previous_hash IS NULL) = (previous_valid_until IS NULL)),
     CONSTRAINT sessions_absolute_after_created CHECK (absolute_expires_at > created_at)
 );
 CREATE INDEX sessions_user_id_idx             ON sessions (user_id);
@@ -78,8 +80,10 @@ CREATE TABLE migrations (
     sql           TEXT        NOT NULL,
     status        TEXT        NOT NULL DEFAULT 'DRAFT',
     error_message TEXT,
+    duration_ms   BIGINT,
     created_by    BIGINT      REFERENCES users (id) ON DELETE SET NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     executed_by   BIGINT      REFERENCES users (id) ON DELETE SET NULL,
     executed_at   TIMESTAMPTZ,
     UNIQUE (database_id, version),
@@ -91,4 +95,40 @@ CREATE TABLE migrations (
     )
 );
 CREATE INDEX migrations_database_version_idx ON migrations (database_id, version DESC);
+
+CREATE TABLE database_change_log (
+    id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    database_id       BIGINT      NOT NULL REFERENCES database_connections (id) ON DELETE CASCADE,
+    migration_id      BIGINT      REFERENCES migrations (id) ON DELETE SET NULL,
+    migration_version INTEGER,
+    user_id           BIGINT      REFERENCES users (id) ON DELETE SET NULL,
+    source            TEXT        NOT NULL,
+    sql               TEXT        NOT NULL,
+    status            TEXT        NOT NULL,
+    error_message     TEXT,
+    duration_ms       BIGINT      NOT NULL DEFAULT 0,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT database_change_log_source CHECK (source IN ('MIGRATION', 'SQL_EDITOR')),
+    CONSTRAINT database_change_log_status CHECK (status IN ('SUCCESS', 'FAILED'))
+);
+CREATE INDEX database_change_log_database_idx ON database_change_log (database_id, created_at DESC);
+
+CREATE TABLE migration_attempts (
+    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    migration_id  BIGINT      NOT NULL REFERENCES migrations (id) ON DELETE RESTRICT,
+    database_id   BIGINT      NOT NULL REFERENCES database_connections (id) ON DELETE RESTRICT,
+    user_id       BIGINT      REFERENCES users (id) ON DELETE SET NULL,
+    sql_snapshot  TEXT        NOT NULL,
+    status        TEXT        NOT NULL DEFAULT 'RUNNING',
+    error_message TEXT,
+    started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at   TIMESTAMPTZ,
+    CONSTRAINT migration_attempts_status CHECK (status IN ('RUNNING', 'SUCCESS', 'FAILED', 'UNKNOWN')),
+    CONSTRAINT migration_attempts_finished CHECK (
+        (status = 'RUNNING' AND finished_at IS NULL)
+        OR (status <> 'RUNNING' AND finished_at IS NOT NULL)
+    )
+);
+CREATE UNIQUE INDEX migration_attempts_one_running_idx ON migration_attempts (migration_id) WHERE status = 'RUNNING';
+CREATE INDEX migration_attempts_database_started_idx ON migration_attempts (database_id, started_at DESC);
 

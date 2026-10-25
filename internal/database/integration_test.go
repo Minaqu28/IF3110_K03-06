@@ -18,7 +18,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/Minaqu28/IF3110_K03-06/frontend"
@@ -83,33 +82,36 @@ func isolatedDB(t *testing.T, migrate bool) *sql.DB {
 	return db
 }
 
-func TestPreviousExpiryMigrationUpgradePostgres(t *testing.T) {
+func TestSinglePlatformInitMigrationPostgres(t *testing.T) {
 	db := isolatedDB(t, false)
 	ctx := context.Background()
-	initialSQL, err := fs.ReadFile(migration.Files, "001_init.sql")
+	files, err := fs.Glob(migration.Files, "*.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	initialOnly := fstest.MapFS{"001_init.sql": &fstest.MapFile{Data: initialSQL}}
-	if err := database.Migrate(ctx, db, initialOnly); err != nil {
-		t.Fatal(err)
-	}
-	user := insertUser(t, db, "legacy", "legacy-password", false)
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO sessions (id, user_id, identifier_hash, previous_hash, csrf_token, absolute_expires_at)
-		VALUES ('legacy-session', $1, $2, $3, 'csrf', now() + interval '12 hours')`,
-		user.ID, make([]byte, 32), []byte(strings.Repeat("b", 32)))
-	if err != nil {
-		t.Fatal(err)
+	if len(files) != 1 || files[0] != "001_init.sql" {
+		t.Fatalf("platform migration files = %v, want only 001_init.sql", files)
 	}
 	if err := database.Migrate(ctx, db, migration.Files); err != nil {
-		t.Fatalf("upgrade existing database: %v", err)
+		t.Fatal(err)
 	}
-	var previousCleared, expiryCleared bool
+	var columns int
 	if err := db.QueryRowContext(ctx, `
-		SELECT previous_hash IS NULL, previous_valid_until IS NULL FROM sessions WHERE id = 'legacy-session'`).
-		Scan(&previousCleared, &expiryCleared); err != nil || !previousCleared || !expiryCleared {
-		t.Fatalf("legacy identifier remained valid: hash=%t expiry=%t err=%v", previousCleared, expiryCleared, err)
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema = current_schema()
+		  AND (table_name, column_name) IN (
+		      ('sessions', 'previous_valid_until'),
+		      ('migrations', 'duration_ms'),
+		      ('migrations', 'updated_at')
+		  )`).Scan(&columns); err != nil || columns != 3 {
+		t.Fatalf("consolidated columns=%d err=%v", columns, err)
+	}
+	var tables int
+	if err := db.QueryRowContext(ctx, `
+		SELECT count(*) FROM information_schema.tables
+		WHERE table_schema = current_schema()
+		  AND table_name IN ('database_change_log', 'migration_attempts')`).Scan(&tables); err != nil || tables != 2 {
+		t.Fatalf("consolidated tables=%d err=%v", tables, err)
 	}
 	if err := database.Migrate(ctx, db, migration.Files); err != nil {
 		t.Fatalf("rerun migration: %v", err)
