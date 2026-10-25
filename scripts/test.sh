@@ -40,5 +40,6 @@ NETWORK_ARGS=""
 docker run --rm $NETWORK_ARGS \
     -v "$PWD":/src -w /src \
     -v if3110-gomod:/go/pkg/mod -v if3110-gocache:/root/.cache/go-build \
+    -e TEST_DATABASE_URL="$DSN" \
     -e TEST_POSTGRES_DSN="$DSN" \
     "$GO_IMAGE" go test -count=1 "$@" ./...

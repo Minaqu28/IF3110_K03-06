@@ -26,5 +26,20 @@ services:
       timeout: 3s
       retries: 10
 
+  target-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: target
+      POSTGRES_PASSWORD: "${TARGET_DB_PASSWORD:?Set TARGET_DB_PASSWORD in .env}"
+      POSTGRES_DB: target
+    volumes:
+      - target-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U target -d target"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   platform-db-data:
+  target-db-data:

@@ -25,13 +25,42 @@ const (
 // ErrReadOnly is returned when a VIEW_ONLY user submits a mutating statement or migration action.
 var ErrReadOnly = errors.New("read-only access: only SELECT/WITH/SHOW/EXPLAIN/VALUES/TABLE statements are allowed")
 
-// ErrTableNotFound is returned when the requested table is not in the public schema.
+// ErrTableNotFound is returned when the requested table is not in the selected schema.
 var ErrTableNotFound = errors.New("table not found")
 
+// ErrAuditFailed means target execution may have succeeded, but the platform
+// could not persist its result. A retry is safe because the target ledger is checked.
+var ErrAuditFailed = errors.New("migration audit failed")
+
 type Table struct {
-	Name string
-	Type string
-	Rows int64 // -1 when the row count could not be determined
+	Schema string
+	Name   string
+	Type   string
+	Rows   int64 // -1 when the row count could not be determined
+}
+
+type Column struct {
+	Name     string
+	Type     string
+	Nullable bool
+	Default  string
+}
+
+type Constraint struct {
+	Name       string
+	Type       string
+	Definition string
+}
+
+type Index struct {
+	Name       string
+	Definition string
+}
+
+type TableDetails struct {
+	Columns     []Column
+	Constraints []Constraint
+	Indexes     []Index
 }
 
 type Cell struct {
@@ -131,11 +160,19 @@ type Target interface {
 	Close(ctx context.Context) error
 }
 
-// TransactionalTarget is an optional interface implemented by real database
-// targets to execute a list of migration statements inside an explicit
-// BEGIN ... COMMIT / ROLLBACK transaction.
+type SchemaTarget interface {
+	Schemas(ctx context.Context) ([]string, error)
+	TablesInSchema(ctx context.Context, schema string) ([]Table, error)
+	TableDetails(ctx context.Context, schema, table string) (TableDetails, error)
+	PreviewPage(ctx context.Context, schema, table string, limit, offset int) (StatementResult, error)
+}
+
 type TransactionalTarget interface {
 	RunInTx(ctx context.Context, statements []string, maxRows int) []StatementResult
+}
+
+type VersionedTarget interface {
+	ApplyVersionedMigration(ctx context.Context, migration Migration, userID int64, maxRows int) (results []StatementResult, alreadyApplied bool, err error)
 }
 
 type Store interface {
@@ -144,8 +181,6 @@ type Store interface {
 	RecentMigrations(ctx context.Context, dbID int64, limit int) ([]Migration, error)
 }
 
-// MigrationStore extends Store with full draft creation, editing, execution
-// tracking, and database change logging.
 type MigrationStore interface {
 	CreateMigration(ctx context.Context, input MigrationInput) (Migration, error)
 	UpdateMigration(ctx context.Context, input MigrationInput) (Migration, error)
@@ -154,7 +189,11 @@ type MigrationStore interface {
 	RecentChanges(ctx context.Context, dbID int64, limit int) ([]ChangeLog, error)
 }
 
-// Access resolves the connection and effective access level of a user.
+type AttemptStore interface {
+	BeginMigrationAttempt(ctx context.Context, migration Migration, userID int64) (int64, error)
+	FinishMigrationAttempt(ctx context.Context, attemptID int64, exec MigrationExecution) error
+}
+
 type Access interface {
 	ConnectionWithAccess(ctx context.Context, actor domain.User, dbID int64) (domain.Connection, authorization.AccessLevel, error)
 }
@@ -172,8 +211,17 @@ func NewService(access Access, store Store) *Service {
 type View struct {
 	Connection        domain.Connection
 	Level             authorization.AccessLevel
+	Unavailable       bool
+	Schemas           []string
+	Schema            string
 	Tables            []Table
 	Table             string
+	Details           *TableDetails
+	Page              int
+	PrevPage          int
+	NextPage          int
+	HasPrev           bool
+	HasNext           bool
 	Preview           *StatementResult
 	History           []Migration
 	SelectedMigration *Migration
@@ -188,12 +236,26 @@ type View struct {
 
 func (v View) CanEdit() bool { return v.Level.Allows(authorization.AccessViewEdit) }
 
-// Browse lists tables and optionally previews one of them or shows a migration detail.
 func (s *Service) Browse(ctx context.Context, actor domain.User, dbID int64, table string) (View, error) {
+	return s.BrowseTable(ctx, actor, dbID, "public", table, 1)
+}
+
+func (s *Service) BrowseTable(ctx context.Context, actor domain.User, dbID int64, schema, table string, page int) (View, error) {
 	view, err := s.authorize(ctx, actor, dbID)
 	if err != nil {
 		return View{}, err
 	}
+	view.Schema = strings.TrimSpace(schema)
+	if view.Schema == "" {
+		view.Schema = "public"
+	}
+	if page < 1 {
+		page = 1
+	}
+	view.Page = page
+	view.PrevPage = page - 1
+	view.NextPage = page + 1
+	view.HasPrev = page > 1
 	s.loadHistory(ctx, &view)
 	s.loadChanges(ctx, &view)
 
@@ -201,14 +263,40 @@ func (s *Service) Browse(ctx context.Context, actor domain.User, dbID int64, tab
 	if err != nil {
 		log.Printf("open target database %d: %v", dbID, err)
 		view.Error = ConnectionMessage(err)
+		view.Unavailable = true
 		return view, nil
 	}
 	defer target.Close(context.WithoutCancel(ctx))
 
-	s.loadTables(ctx, target, &view)
+	if inspector, ok := target.(SchemaTarget); ok {
+		view.Schemas, err = inspector.Schemas(ctx)
+		if err != nil {
+			log.Printf("list schemas on database %d: %v", dbID, err)
+			view.Error = "Gagal membaca daftar schema."
+			return view, nil
+		}
+		view.Tables, err = inspector.TablesInSchema(ctx, view.Schema)
+		if err != nil {
+			log.Printf("list tables on database %d schema %q: %v", dbID, view.Schema, err)
+			view.Error = "Gagal membaca daftar tabel."
+			return view, nil
+		}
+	} else {
+		s.loadTables(ctx, target, &view)
+	}
 	if table = strings.TrimSpace(table); table != "" && view.Error == "" {
 		view.Table = table
-		preview, err := target.Preview(ctx, table, PreviewLimit)
+		var preview StatementResult
+		if inspector, ok := target.(SchemaTarget); ok {
+			var details TableDetails
+			details, err = inspector.TableDetails(ctx, view.Schema, table)
+			if err == nil {
+				view.Details = &details
+				preview, err = inspector.PreviewPage(ctx, view.Schema, table, PreviewLimit, (page-1)*PreviewLimit)
+			}
+		} else {
+			preview, err = target.Preview(ctx, table, PreviewLimit)
+		}
 		switch {
 		case errors.Is(err, ErrTableNotFound):
 			view.Error = "Tabel tidak ditemukan."
@@ -217,13 +305,12 @@ func (s *Service) Browse(ctx context.Context, actor domain.User, dbID int64, tab
 			view.Error = "Gagal membaca isi tabel."
 		default:
 			view.Preview = &preview
+			view.HasNext = preview.Truncated
 		}
 	}
 	return view, nil
 }
 
-// ShowMigration loads a specific migration version for viewing (available to
-// both VIEW_ONLY and VIEW_EDIT users) and pre-populates the editor if editable.
 func (s *Service) ShowMigration(ctx context.Context, actor domain.User, dbID, version int64) (View, error) {
 	view, err := s.Browse(ctx, actor, dbID, "")
 	if err != nil {
@@ -247,8 +334,6 @@ func (s *Service) ShowMigration(ctx context.Context, actor domain.User, dbID, ve
 	return view, nil
 }
 
-// PreviewMigration parses and previews the SQL operations of a migration
-// without executing them. Only VIEW_EDIT users may create/preview migrations.
 func (s *Service) PreviewMigration(ctx context.Context, actor domain.User, dbID, version int64, title, sql string) (View, error) {
 	view, err := s.authorize(ctx, actor, dbID)
 	if err != nil {
@@ -281,7 +366,6 @@ func (s *Service) PreviewMigration(ctx context.Context, actor domain.User, dbID,
 	return s.reload(ctx, view, dbID), nil
 }
 
-// CreateMigration saves a new DRAFT migration. Only VIEW_EDIT users may create migrations.
 func (s *Service) CreateMigration(ctx context.Context, actor domain.User, dbID int64, title, sql string) (View, error) {
 	view, err := s.authorize(ctx, actor, dbID)
 	if err != nil {
@@ -398,37 +482,83 @@ func (s *Service) ExecuteMigration(ctx context.Context, actor domain.User, dbID,
 		view.Error = "SQL migrasi tidak boleh kosong."
 		return s.reload(ctx, view, dbID), nil
 	}
+	attemptStore, tracksAttempts := s.store.(AttemptStore)
+	var attemptID int64
+	if tracksAttempts {
+		attemptID, err = attemptStore.BeginMigrationAttempt(ctx, m, actor.ID)
+		if errors.Is(err, admin.ErrConflict) {
+			view.Error = "Migrasi sedang dijalankan, sudah selesai, atau draft berubah. Muat ulang riwayat."
+			return s.reload(ctx, view, dbID), admin.ErrConflict
+		}
+		if err != nil {
+			return View{}, err
+		}
+	}
+	started := time.Now()
+	finish := func(status, message string) error {
+		exec := MigrationExecution{
+			DatabaseID: dbID,
+			Migration:  m,
+			UserID:     actor.ID,
+			Status:     status,
+			Error:      message,
+			DurationMs: time.Since(started).Milliseconds(),
+		}
+		auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if tracksAttempts {
+			return attemptStore.FinishMigrationAttempt(auditCtx, attemptID, exec)
+		}
+		return ms.RecordMigrationExecution(auditCtx, exec)
+	}
 
 	target, err := s.store.OpenTarget(ctx, dbID, false)
 	if err != nil {
 		log.Printf("open target database %d: %v", dbID, err)
 		view.Error = ConnectionMessage(err)
+		view.Unavailable = true
+		if auditErr := finish("FAILED", view.Error); auditErr != nil {
+			log.Printf("record failed connection attempt on database %d: %v", dbID, auditErr)
+		}
 		s.loadHistory(ctx, &view)
 		s.loadChanges(ctx, &view)
 		return view, nil
 	}
 	defer target.Close(context.WithoutCancel(ctx))
 
-	start := time.Now()
-	if txTarget, ok := target.(TransactionalTarget); ok {
+	if versioned, ok := target.(VersionedTarget); ok {
+		var already bool
+		view.Results, already, err = versioned.ApplyVersionedMigration(ctx, m, actor.ID, MaxResultRows)
+		if errors.Is(err, admin.ErrConflict) {
+			view.Error = "Jalankan migrasi sebelumnya terlebih dahulu atau muat ulang riwayat."
+			if auditErr := finish("FAILED", view.Error); auditErr != nil {
+				log.Printf("record conflicted migration on database %d: %v", dbID, auditErr)
+			}
+			return s.reload(ctx, view, dbID), admin.ErrConflict
+		}
+		if err != nil {
+			log.Printf("execute migration on database %d: %v", dbID, err)
+			if auditErr := finish("FAILED", "Target migration execution failed"); auditErr != nil {
+				log.Printf("record failed migration on database %d: %v", dbID, auditErr)
+			}
+			return View{}, err
+		}
+		if already {
+			view.Results = []StatementResult{{Command: "Migrasi sudah ada di ledger target; mencocokkan status platform"}}
+		}
+	} else if txTarget, ok := target.(TransactionalTarget); ok {
 		view.Results = txTarget.RunInTx(ctx, m.Operations, MaxResultRows)
 	} else {
 		view.Results = target.Run(ctx, m.SQL, MaxResultRows)
 	}
-	durationMs := time.Since(start).Milliseconds()
-
-	exec := MigrationExecution{
-		DatabaseID: dbID,
-		Migration:  m,
-		UserID:     actor.ID,
-		Status:     "SUCCESS",
-		DurationMs: durationMs,
-	}
+	status, message := "SUCCESS", ""
 	if msg := firstError(view.Results); msg != "" {
-		exec.Status, exec.Error = "FAILED", msg
+		status, message = "FAILED", msg
 	}
-	if err := ms.RecordMigrationExecution(context.WithoutCancel(ctx), exec); err != nil {
+	if err := finish(status, message); err != nil {
 		log.Printf("record migration execution on database %d: %v", dbID, err)
+		view.Error = "Status di target mungkin sudah berubah, tetapi pencatatan platform gagal. Muat ulang dan periksa riwayat sebelum mencoba lagi."
+		return view, ErrAuditFailed
 	}
 	if updated, err := ms.GetMigration(ctx, dbID, version); err == nil {
 		updated.Operations = m.Operations
@@ -472,6 +602,7 @@ func (s *Service) Execute(ctx context.Context, actor domain.User, dbID int64, sq
 	if err != nil {
 		log.Printf("open target database %d: %v", dbID, err)
 		view.Error = ConnectionMessage(err)
+		view.Unavailable = true
 		s.loadHistory(ctx, &view)
 		s.loadChanges(ctx, &view)
 		return view, nil
@@ -595,6 +726,20 @@ func SplitStatements(sql string) []string {
 		}
 		rest = rest[i+1:]
 	}
+}
+
+func HasTransactionControl(sql string) bool {
+	for _, statement := range SplitStatements(sql) {
+		fields := strings.Fields(stripLeadingComments(statement))
+		if len(fields) == 0 {
+			continue
+		}
+		switch strings.ToUpper(fields[0]) {
+		case "BEGIN", "START", "COMMIT", "END", "ROLLBACK", "ABORT", "SAVEPOINT", "RELEASE", "PREPARE":
+			return true
+		}
+	}
+	return false
 }
 
 var readOnlyKeywords = map[string]bool{

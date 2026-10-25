@@ -176,6 +176,15 @@ func TestShowInvalidID(t *testing.T) {
 	}
 }
 
+func TestShowInvalidPage(t *testing.T) {
+	router, _ := newTestRouter(t, activeSession())
+	for _, path := range []string{"/databases/1?page=0", "/databases/1?page=abc", "/databases/1?page=10001"} {
+		if rec := do(router, http.MethodGet, path, nil, true); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", path, rec.Code)
+		}
+	}
+}
+
 func TestShowListsTablesAndPreview(t *testing.T) {
 	router, _ := newTestRouter(t, activeSession())
 	rec := do(router, http.MethodGet, "/databases/2?table=users", nil, true)
@@ -267,11 +276,11 @@ func TestMigrationRoutesPermissionsAndFlow(t *testing.T) {
 		t.Fatalf("preview status = %d", prev.Code)
 	}
 	create := do(router, http.MethodPost, "/databases/1/migrations", migForm, true)
-	if create.Code != http.StatusOK || len(store.migrations) != 1 {
+	if create.Code != http.StatusSeeOther || create.Header().Get("Location") != "/databases/1?migration=1" || len(store.migrations) != 1 {
 		t.Fatalf("create status = %d, migrations = %+v", create.Code, store.migrations)
 	}
 	exec := do(router, http.MethodPost, "/databases/1/migrations/1/execute", url.Values{"csrf_token": {testCSRF}}, true)
-	if exec.Code != http.StatusOK || len(store.ran) != 1 {
+	if exec.Code != http.StatusSeeOther || exec.Header().Get("Location") != "/databases/1?migration=1" || len(store.ran) != 1 {
 		t.Fatalf("execute status = %d, ran = %v", exec.Code, store.ran)
 	}
 

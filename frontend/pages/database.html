@@ -9,14 +9,16 @@
 
     <div class="explorer">
         <section class="panel table-list">
-            <h2>Tabel (public)</h2>
+            <h2>Schema</h2>
+            {{if .Schemas}}<nav>{{range .Schemas}}<a href="/databases/{{$.Connection.ID}}?schema={{.}}">{{.}}</a> {{end}}</nav>{{end}}
+            <h2>Tabel ({{.Schema}})</h2>
             {{if .Tables}}
             <table>
                 <thead><tr><th>Nama</th><th>Baris</th></tr></thead>
                 <tbody>
                 {{range .Tables}}
                 <tr{{if eq .Name $.Table}} class="selected"{{end}}>
-                    <td><a href="/databases/{{$.Connection.ID}}?table={{.Name}}">{{.Name}}</a>{{if ne .Type "BASE TABLE"}} <small>({{.Type}})</small>{{end}}</td>
+                    <td><a href="/databases/{{$.Connection.ID}}?schema={{$.Schema}}&amp;table={{.Name}}">{{.Name}}</a>{{if ne .Type "BASE TABLE"}} <small>({{.Type}})</small>{{end}}</td>
                     <td>{{if lt .Rows 0}}?{{else}}{{.Rows}}{{end}}</td>
                 </tr>
                 {{end}}
@@ -28,8 +30,31 @@
         <div class="explorer-main">
             {{with .Preview}}
             <section class="panel">
-                <h2>{{$.Table}} <small>(maks. 50 baris)</small></h2>
+                <h2>{{$.Schema}}.{{$.Table}} <small>(halaman {{$.Page}}, 50 baris per halaman)</small></h2>
                 {{template "result-table" .}}
+                {{if or $.HasPrev $.HasNext}}
+                <nav aria-label="Halaman data tabel">
+                    {{if $.HasPrev}}<a href="/databases/{{$.Connection.ID}}?schema={{$.Schema}}&amp;table={{$.Table}}&amp;page={{$.PrevPage}}">Sebelumnya</a>{{end}}
+                    {{if $.HasNext}}<a href="/databases/{{$.Connection.ID}}?schema={{$.Schema}}&amp;table={{$.Table}}&amp;page={{$.NextPage}}">Berikutnya</a>{{end}}
+                </nav>
+                {{end}}
+            </section>
+            {{end}}
+
+            {{with .Details}}
+            <section class="panel">
+                <h2>Kolom</h2>
+                {{if .Columns}}<table><thead><tr><th>Nama</th><th>Tipe</th><th>Nullable</th><th>Default</th></tr></thead><tbody>
+                {{range .Columns}}<tr><td>{{.Name}}</td><td>{{.Type}}</td><td>{{if .Nullable}}Ya{{else}}Tidak{{end}}</td><td>{{if .Default}}{{.Default}}{{else}}-{{end}}</td></tr>{{end}}
+                </tbody></table>{{else}}<p>Tidak ada kolom.</p>{{end}}
+                <h2>Constraint</h2>
+                {{if .Constraints}}<table><thead><tr><th>Nama</th><th>Definisi</th></tr></thead><tbody>
+                {{range .Constraints}}<tr><td>{{.Name}}</td><td><code>{{.Definition}}</code></td></tr>{{end}}
+                </tbody></table>{{else}}<p>Tidak ada constraint.</p>{{end}}
+                <h2>Index</h2>
+                {{if .Indexes}}<table><thead><tr><th>Nama</th><th>Definisi</th></tr></thead><tbody>
+                {{range .Indexes}}<tr><td>{{.Name}}</td><td><code>{{.Definition}}</code></td></tr>{{end}}
+                </tbody></table>{{else}}<p>Tidak ada index.</p>{{end}}
             </section>
             {{end}}
 
@@ -185,6 +210,6 @@
     </tbody>
 </table>
 </div>
-{{if .Truncated}}<p><small>Hasil dipotong; hanya {{len .Rows}} baris pertama yang ditampilkan.</small></p>{{end}}
+{{if .Truncated}}<p><small>Hasil dibatasi hingga {{len .Rows}} baris pada tampilan ini.</small></p>{{end}}
 {{end}}
 {{end}}

@@ -23,6 +23,7 @@ func renderDatabasePage(t *testing.T, level authorization.AccessLevel) string {
 	view := explorer.View{
 		Connection: domain.Connection{ID: 3, Name: "app"},
 		Level:      level,
+		Schema:     "public",
 		Tables:     []explorer.Table{{Name: "users", Type: "BASE TABLE", Rows: 1}, {Name: "v", Type: "VIEW", Rows: -1}},
 		Table:      "users",
 		Preview:    &result,
@@ -38,7 +39,7 @@ func renderDatabasePage(t *testing.T, level authorization.AccessLevel) string {
 
 func TestDatabasePageEditorOnlyForViewEdit(t *testing.T) {
 	edit := renderDatabasePage(t, authorization.AccessViewEdit)
-	for _, want := range []string{`name="sql"`, `value="tok"`, "/databases/3?table=users", "NULL", "ERROR: boom"} {
+	for _, want := range []string{`name="sql"`, `value="tok"`, "/databases/3?schema=public&amp;table=users", "NULL", "ERROR: boom"} {
 		if !strings.Contains(edit, want) {
 			t.Errorf("VIEW_EDIT page missing %q", want)
 		}
