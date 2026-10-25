@@ -240,7 +240,6 @@ func TestResetPasswordHashesNewPassword(t *testing.T) {
 	}
 }
 
-// An admin must not be able to lock the platform by removing themselves.
 func TestAdminCannotRemoveOwnAccess(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(&fakeStore{}, nil)
@@ -310,7 +309,6 @@ func TestGrantAccessRejectsUnknownLevels(t *testing.T) {
 	}
 }
 
-// Documented policy: the effective level is the highest across groups.
 func TestAccessForUsesHighestGroupGrant(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -352,7 +350,6 @@ func TestInactiveUserHasNoAccess(t *testing.T) {
 	}
 }
 
-// A database the user cannot see must look the same as a forbidden one (no existence leak).
 func TestConnectionWithAccessHidesMissingDatabases(t *testing.T) {
 	ctx := context.Background()
 	store := &fakeStore{accessFn: func() (domain.Connection, authorization.AccessLevel, error) {
