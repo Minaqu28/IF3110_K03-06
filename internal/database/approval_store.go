@@ -57,7 +57,15 @@ func createReviewTx(ctx context.Context, tx *sql.Tx, review domain.ReviewRequest
 }
 
 func (s *ApprovalPostgresStore) ListDecisions(ctx context.Context, reviewID int64) ([]domain.ApprovalDecision, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	return listDecisions(ctx, s.db, reviewID)
+}
+
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func listDecisions(ctx context.Context, q queryer, reviewID int64) ([]domain.ApprovalDecision, error) {
+	rows, err := q.QueryContext(ctx, `
 		SELECT `+decisionColumns+` FROM approval_decisions
 		WHERE review_id = $1 ORDER BY group_id`, reviewID)
 	if err != nil {

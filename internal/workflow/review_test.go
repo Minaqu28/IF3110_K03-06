@@ -56,7 +56,7 @@ func TestSubmitForReview(t *testing.T) {
 
 	t.Run("locks through the submitter with every required approver", func(t *testing.T) {
 		sub := &fakeSubmitter{review: domain.ReviewRequest{ID: 5, Status: domain.ReviewStatusPending}}
-		svc := NewReviewService(fakeAccess{level: authorization.AccessViewEdit}, fakeGrants{grants: editGrants}, sub)
+		svc := NewReviewService(fakeAccess{level: authorization.AccessViewEdit}, fakeGrants{grants: editGrants}, sub, nil)
 		got, err := svc.SubmitForReview(ctx, actor, 7, 99)
 		if err != nil || got.ID != 5 {
 			t.Fatalf("review = %+v, err = %v", got, err)
@@ -83,7 +83,7 @@ func TestSubmitForReview(t *testing.T) {
 	for _, c := range refused {
 		t.Run(c.name, func(t *testing.T) {
 			sub := &fakeSubmitter{}
-			_, err := NewReviewService(c.access, c.grants, sub).SubmitForReview(ctx, actor, 7, 99)
+			_, err := NewReviewService(c.access, c.grants, sub, nil).SubmitForReview(ctx, actor, 7, 99)
 			if !errors.Is(err, c.want) {
 				t.Fatalf("err = %v, want %v", err, c.want)
 			}
@@ -95,9 +95,71 @@ func TestSubmitForReview(t *testing.T) {
 
 	t.Run("submitter error is returned", func(t *testing.T) {
 		sub := &fakeSubmitter{err: admin.ErrConflict}
-		_, err := NewReviewService(fakeAccess{level: authorization.AccessViewEdit}, fakeGrants{grants: editGrants}, sub).SubmitForReview(ctx, actor, 7, 99)
+		_, err := NewReviewService(fakeAccess{level: authorization.AccessViewEdit}, fakeGrants{grants: editGrants}, sub, nil).SubmitForReview(ctx, actor, 7, 99)
 		if !errors.Is(err, admin.ErrConflict) {
 			t.Fatalf("err = %v, want conflict", err)
 		}
 	})
+}
+
+type decideCall struct {
+	reviewID, leaderID int64
+	status             domain.ApprovalStatus
+	comment            string
+	resolve            func([]domain.ApprovalDecision) domain.ReviewStatus
+}
+
+type fakeDecider struct {
+	calls []decideCall
+}
+
+func (f *fakeDecider) DecideReview(_ context.Context, reviewID, leaderID int64, status domain.ApprovalStatus, comment string, resolve func([]domain.ApprovalDecision) domain.ReviewStatus) (domain.ReviewRequest, error) {
+	f.calls = append(f.calls, decideCall{reviewID, leaderID, status, comment, resolve})
+	return domain.ReviewRequest{ID: reviewID, Status: domain.ReviewStatusPending}, nil
+}
+
+func TestDecideApproval(t *testing.T) {
+	ctx := context.Background()
+	leader := domain.User{ID: 10, IsActive: true}
+
+	for _, status := range []domain.ApprovalStatus{domain.ApprovalStatusApproved, domain.ApprovalStatusRejected} {
+		t.Run(string(status), func(t *testing.T) {
+			dec := &fakeDecider{}
+			got, err := NewReviewService(nil, nil, nil, dec).DecideApproval(ctx, leader, 5, status, "looks fine")
+			if err != nil || got.ID != 5 || len(dec.calls) != 1 {
+				t.Fatalf("review = %+v, err = %v, calls = %d", got, err, len(dec.calls))
+			}
+			c := dec.calls[0]
+			if c.reviewID != 5 || c.leaderID != 10 || c.status != status || c.comment != "looks fine" || c.resolve == nil {
+				t.Fatalf("call = %+v", c)
+			}
+			if c.resolve([]domain.ApprovalDecision{{Status: domain.ApprovalStatusApproved}}) != domain.ReviewStatusApproved {
+				t.Fatal("decider was not given ResolveReview")
+			}
+		})
+	}
+
+	refused := []struct {
+		name   string
+		actor  domain.User
+		status domain.ApprovalStatus
+		want   error
+	}{
+		{"pending is not a decision", leader, domain.ApprovalStatusPending, admin.ErrInvalidInput},
+		{"stale is not a decision", leader, domain.ApprovalStatusStale, admin.ErrInvalidInput},
+		{"unknown status", leader, domain.ApprovalStatus("MAYBE"), admin.ErrInvalidInput},
+		{"inactive user", domain.User{ID: 10}, domain.ApprovalStatusApproved, admin.ErrForbidden},
+		{"no user", domain.User{IsActive: true}, domain.ApprovalStatusApproved, admin.ErrForbidden},
+	}
+	for _, c := range refused {
+		t.Run(c.name, func(t *testing.T) {
+			dec := &fakeDecider{}
+			if _, err := NewReviewService(nil, nil, nil, dec).DecideApproval(ctx, c.actor, 5, c.status, ""); !errors.Is(err, c.want) {
+				t.Fatalf("err = %v, want %v", err, c.want)
+			}
+			if len(dec.calls) != 0 {
+				t.Fatal("decider was called for a refused decision")
+			}
+		})
+	}
 }

@@ -16,7 +16,12 @@ func (s *RevisionPostgresStore) CreateRevision(ctx context.Context, rev domain.M
 		batchCol = sql.NullString{String: rev.Batch.CursorColumn, Valid: true}
 		batchSize = sql.NullInt64{Int64: int64(rev.Batch.BatchSize), Valid: true}
 	}
-	created, err := scanRevision(s.db.QueryRowContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.MigrationRevision{}, err
+	}
+	defer tx.Rollback()
+	created, err := scanRevision(tx.QueryRowContext(ctx, `
 		INSERT INTO migration_revisions (
 		    migration_id, database_id, revision, title, up_sql, down_sql, reversible, irreversible_reason,
 		    definition_hash, batch_table, batch_cursor_column, batch_size, created_by
@@ -32,6 +37,12 @@ func (s *RevisionPostgresStore) CreateRevision(ctx context.Context, rev domain.M
 		sql.NullInt64{Int64: rev.CreatedBy, Valid: rev.CreatedBy > 0}))
 	if err != nil {
 		return domain.MigrationRevision{}, adminError(err)
+	}
+	if err := staleOlderReviewsTx(ctx, tx, created.MigrationID, created.Revision); err != nil {
+		return domain.MigrationRevision{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.MigrationRevision{}, err
 	}
 	return created, nil
 }

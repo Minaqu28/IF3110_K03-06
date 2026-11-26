@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/authorization"
+	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 )
 
 var ErrNoApprovers = errors.New("no group leader can approve migrations on this database")
@@ -36,4 +37,23 @@ func RequiredGroups(databaseID int64, grants []GroupGrant) ([]RequiredApprover, 
 	}
 	sort.Slice(required, func(i, j int) bool { return required[i].GroupID < required[j].GroupID })
 	return required, nil
+}
+
+func ResolveReview(decisions []domain.ApprovalDecision) domain.ReviewStatus {
+	if len(decisions) == 0 {
+		return domain.ReviewStatusPending
+	}
+	approved := 0
+	for _, d := range decisions {
+		switch d.Status {
+		case domain.ApprovalStatusRejected:
+			return domain.ReviewStatusRejected
+		case domain.ApprovalStatusApproved:
+			approved++
+		}
+	}
+	if approved == len(decisions) {
+		return domain.ReviewStatusApproved
+	}
+	return domain.ReviewStatusPending
 }

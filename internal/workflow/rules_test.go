@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/authorization"
+	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 )
 
 func TestRequiredGroups(t *testing.T) {
@@ -88,6 +89,37 @@ func TestRequiredGroups(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, c.want) {
 				t.Fatalf("got %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestResolveReview(t *testing.T) {
+	d := func(statuses ...domain.ApprovalStatus) []domain.ApprovalDecision {
+		var out []domain.ApprovalDecision
+		for _, s := range statuses {
+			out = append(out, domain.ApprovalDecision{Status: s})
+		}
+		return out
+	}
+	approved, rejected, pending, stale := domain.ApprovalStatusApproved, domain.ApprovalStatusRejected, domain.ApprovalStatusPending, domain.ApprovalStatusStale
+	cases := []struct {
+		name      string
+		decisions []domain.ApprovalDecision
+		want      domain.ReviewStatus
+	}{
+		{"all approved", d(approved, approved), domain.ReviewStatusApproved},
+		{"single approval", d(approved), domain.ReviewStatusApproved},
+		{"one still pending", d(approved, pending), domain.ReviewStatusPending},
+		{"one rejection wins over approvals", d(approved, rejected, approved), domain.ReviewStatusRejected},
+		{"rejection wins over pending", d(pending, rejected), domain.ReviewStatusRejected},
+		{"stale never counts as approved", d(approved, stale), domain.ReviewStatusPending},
+		{"no decisions never approve", nil, domain.ReviewStatusPending},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := ResolveReview(c.decisions); got != c.want {
+				t.Fatalf("ResolveReview = %s, want %s", got, c.want)
 			}
 		})
 	}

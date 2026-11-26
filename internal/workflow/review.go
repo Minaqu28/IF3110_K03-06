@@ -23,13 +23,14 @@ type ReviewSubmitter interface {
 }
 
 type ReviewService struct {
-	access  AccessChecker
-	grants  GrantReader
-	reviews ReviewSubmitter
+	access    AccessChecker
+	grants    GrantReader
+	reviews   ReviewSubmitter
+	decisions ReviewDecider
 }
 
-func NewReviewService(access AccessChecker, grants GrantReader, reviews ReviewSubmitter) *ReviewService {
-	return &ReviewService{access: access, grants: grants, reviews: reviews}
+func NewReviewService(access AccessChecker, grants GrantReader, reviews ReviewSubmitter, decisions ReviewDecider) *ReviewService {
+	return &ReviewService{access: access, grants: grants, reviews: reviews, decisions: decisions}
 }
 
 func (s *ReviewService) SubmitForReview(ctx context.Context, actor domain.User, databaseID, revisionID int64) (domain.ReviewRequest, error) {
@@ -56,4 +57,18 @@ func (s *ReviewService) requireEdit(ctx context.Context, actor domain.User, data
 		return admin.ErrForbidden
 	}
 	return nil
+}
+
+type ReviewDecider interface {
+	DecideReview(ctx context.Context, reviewID, leaderID int64, status domain.ApprovalStatus, comment string, resolve func([]domain.ApprovalDecision) domain.ReviewStatus) (domain.ReviewRequest, error)
+}
+
+func (s *ReviewService) DecideApproval(ctx context.Context, actor domain.User, reviewID int64, status domain.ApprovalStatus, comment string) (domain.ReviewRequest, error) {
+	if status != domain.ApprovalStatusApproved && status != domain.ApprovalStatusRejected {
+		return domain.ReviewRequest{}, admin.ErrInvalidInput
+	}
+	if actor.ID <= 0 || !actor.IsActive {
+		return domain.ReviewRequest{}, admin.ErrForbidden
+	}
+	return s.decisions.DecideReview(ctx, reviewID, actor.ID, status, comment, ResolveReview)
 }
