@@ -115,3 +115,51 @@ func TestRunBatchLostCommitIsUncertainIntegration(t *testing.T) {
 		t.Fatalf("err = %v, want an uncertain commit", err)
 	}
 }
+
+func TestRunBatchKeepsABeforeImageIntegration(t *testing.T) {
+	target, spec := batchFixture(t)
+	ctx := context.Background()
+	e := &TargetExecutor{}
+	if _, err := target.conn.Exec(ctx, `UPDATE items SET v = id * 7 WHERE id <= 4`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.runBatch(ctx, target.conn, spec); err != nil {
+		t.Fatal(err)
+	}
+	var mismatched, backed int
+	if err := target.conn.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE (b.before_row->>'v')::int <> b.row_key * 7 OR (b.before_row->>'id')::bigint <> b.row_key),
+		       count(*)
+		FROM public._dbmp_batch_backup b
+		WHERE b.source_execution_id = $1 AND b.batch_no = 1`, batchSource).Scan(&mismatched, &backed); err != nil {
+		t.Fatal(err)
+	}
+	if backed != 4 || mismatched != 0 {
+		t.Fatalf("backup rows = %d, %d not matching the pre-change data", backed, mismatched)
+	}
+	var after int
+	if err := target.conn.QueryRow(ctx, `SELECT v FROM items WHERE id = 2`).Scan(&after); err != nil || after != 15 {
+		t.Fatalf("row 2 after the batch = %d, err = %v; the backup must hold the old value 14", after, err)
+	}
+
+	spec.batchNo, spec.from = 2, 4
+	spec.sql = `UPDATE items SET v = v + 1 / (id - 6) WHERE id > $1 AND id <= $2`
+	if _, err := e.runBatch(ctx, target.conn, spec); err == nil {
+		t.Fatal("batch 2 should fail")
+	}
+	var orphans int
+	if err := target.conn.QueryRow(ctx, `SELECT count(*) FROM public._dbmp_batch_backup WHERE batch_no = 2`).Scan(&orphans); err != nil || orphans != 0 {
+		t.Fatalf("a failed batch left %d backup rows", orphans)
+	}
+
+	down := spec
+	down.batchNo, down.from, down.direction = 1, 0, domain.DirectionDown
+	down.executionID = "bbbbbbbb-0000-4000-8000-000000000002"
+	down.sql = `UPDATE items SET v = v - 1 WHERE id > $1 AND id <= $2`
+	if _, err := e.runBatch(ctx, target.conn, down); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.conn.QueryRow(ctx, `SELECT count(*) FROM public._dbmp_batch_backup`).Scan(&backed); err != nil || backed != 4 {
+		t.Fatalf("a DOWN batch must not write backup rows: %d, err = %v", backed, err)
+	}
+}

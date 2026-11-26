@@ -25,6 +25,7 @@ const (
 
 type targetHarness struct {
 	platform   *sql.DB
+	store      *database.AdminPostgresStore
 	executor   *database.TargetExecutor
 	target     *pgx.Conn
 	databaseID int64
@@ -75,7 +76,7 @@ func newTargetHarness(t *testing.T) *targetHarness {
 		t.Fatal(err)
 	}
 	return &targetHarness{
-		platform: platform, target: target, databaseID: conn.ID,
+		platform: platform, store: store, target: target, databaseID: conn.ID,
 		executor: database.NewTargetExecutor(store, database.WorkerTargetOptions(time.Minute), nil),
 		userID:   insertUser(t, platform, "runner", "runner-long-password", false).ID,
 	}

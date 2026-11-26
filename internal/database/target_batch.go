@@ -45,6 +45,15 @@ func (e *TargetExecutor) runBatch(ctx context.Context, conn *pgx.Conn, b batchSp
 	if !hi.Valid {
 		return batchOutcome{done: true}, nil
 	}
+	if b.direction == domain.DirectionUp {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO public._dbmp_batch_backup (source_execution_id, batch_no, row_key, before_row)
+			SELECT $1, $2, t.`+b.target.column+`, to_jsonb(t) FROM `+b.target.table+` t
+			WHERE t.`+b.target.column+` > $3 AND t.`+b.target.column+` <= $4`,
+			b.sourceID, b.batchNo, b.from, hi.Int64); err != nil {
+			return batchOutcome{}, err
+		}
+	}
 	tag, err := tx.Exec(ctx, b.sql, b.from, hi.Int64)
 	if err != nil {
 		return batchOutcome{}, err

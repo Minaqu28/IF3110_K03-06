@@ -66,6 +66,11 @@ func (e *TargetExecutor) Execute(ctx context.Context, req domain.ExecutionReques
 		return domain.ExecutionResult{}, err
 	}
 	defer target.Close(context.WithoutCancel(ctx))
+	if batch {
+		if err := lockTargetSession(ctx, target.conn); err != nil {
+			return domain.ExecutionResult{}, err
+		}
+	}
 	if err := ensureBookkeeping(ctx, target.conn); err != nil {
 		return domain.ExecutionResult{}, err
 	}

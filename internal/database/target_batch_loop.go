@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
@@ -61,6 +62,11 @@ func (e *TargetExecutor) runBatchMode(ctx context.Context, conn *pgx.Conn, req d
 		return result, err
 	}
 	result.AppliedBatches, result.AffectedRows = progress.lastBatch, progress.rows
+	if progress.lastBatch > 0 {
+		if err := e.report(ctx, req.ExecutionID, result, progress.cursor); err != nil {
+			return progressFailed(result, err), nil
+		}
+	}
 	var recorded bool
 	if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM public._dbmp_migrations WHERE execution_id = $1)`, req.ExecutionID).Scan(&recorded); err != nil {
 		return result, err
@@ -92,7 +98,23 @@ func (e *TargetExecutor) runBatchMode(ctx context.Context, conn *pgx.Conn, req d
 		result.AffectedRows += out.rows
 		spec.batchNo++
 		spec.from = out.to
+		if err := e.report(ctx, req.ExecutionID, result, out.to); err != nil {
+			return progressFailed(result, err), nil
+		}
 	}
+}
+
+func (e *TargetExecutor) report(ctx context.Context, executionID string, result domain.ExecutionResult, cursor int64) error {
+	return e.progress.Report(ctx, executionID, domain.BatchProgress{
+		Status: domain.BatchStatusCommitted, Completed: result.AppliedBatches,
+		LastCursor: strconv.FormatInt(cursor, 10), AffectedRows: result.AffectedRows,
+	})
+}
+
+func progressFailed(result domain.ExecutionResult, err error) domain.ExecutionResult {
+	result.Status, result.ErrorCode = domain.ExecutionStatusPartial, ErrorCodeInterrupted
+	result.ErrorMessage = "stopped after a batch because its progress could not be saved: " + err.Error()
+	return result
 }
 
 func checkLedger(ctx context.Context, conn *pgx.Conn, req domain.ExecutionRequest, rev domain.MigrationRevision, version int64) (refusal, error) {
@@ -152,4 +174,15 @@ func interrupted(ctx context.Context, result domain.ExecutionResult) (domain.Exe
 	result.Status, result.ErrorCode = domain.ExecutionStatusPartial, ErrorCodeInterrupted
 	result.ErrorMessage = "stopped between batches; resume continues from the last checkpoint"
 	return result, nil
+}
+
+func lockTargetSession(ctx context.Context, conn *pgx.Conn) error {
+	var acquired bool
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, int64(targetMigrationLockKey)).Scan(&acquired); err != nil {
+		return err
+	}
+	if !acquired {
+		return migrationengine.ErrTargetBusy
+	}
+	return nil
 }
