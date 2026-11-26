@@ -3,6 +3,7 @@ package database_test
 import (
 	"context"
 	"database/sql"
+	"reflect"
 	"testing"
 	"time"
 
@@ -37,7 +38,7 @@ func TestOutboxRelayPublishesUnpublishedJobsPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Message() != result.Message {
+	if !reflect.DeepEqual(d.Message(), result.Message) {
 		t.Fatalf("relayed %+v, want the submitted message %+v", d.Message(), result.Message)
 	}
 

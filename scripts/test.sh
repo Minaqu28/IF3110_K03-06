@@ -29,7 +29,7 @@ if [ "$INTEGRATION" = 1 ]; then
     cleanup
     docker network create "$NET" >/dev/null
     docker run -d --name "$PG" --network "$NET" -e POSTGRES_PASSWORD=test postgres:17-alpine >/dev/null
-    docker run -d --name "$MQ" --network "$NET" -e RABBITMQ_DEFAULT_USER=test -e RABBITMQ_DEFAULT_PASS=test rabbitmq:4-alpine >/dev/null
+    docker run -d --name "$MQ" --network "$NET" --tmpfs /var/lib/rabbitmq:uid=100,gid=101 -e RABBITMQ_DEFAULT_USER=test -e RABBITMQ_DEFAULT_PASS=test rabbitmq:4-alpine >/dev/null
     echo "waiting for postgres..."
     until docker exec "$PG" pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
     sleep 1

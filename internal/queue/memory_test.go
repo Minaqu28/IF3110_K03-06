@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -35,7 +36,7 @@ func TestMemoryDeliversInOrderAndAcks(t *testing.T) {
 		}
 	}
 	first, second := receive(t, q), receive(t, q)
-	if first.Message() != msg("a") || second.Message() != msg("b") || first.Redelivered() || second.Redelivered() {
+	if !reflect.DeepEqual(first.Message(), msg("a")) || !reflect.DeepEqual(second.Message(), msg("b")) || first.Redelivered() || second.Redelivered() {
 		t.Fatalf("got %+v then %+v", first.Message(), second.Message())
 	}
 	if ready, unacked, _ := q.Counts(); ready != 0 || unacked != 2 {
@@ -65,7 +66,7 @@ func TestMemoryRequeueRedelivers(t *testing.T) {
 		t.Fatal(err)
 	}
 	again := receive(t, q)
-	if again.Message() != msg("a") || !again.Redelivered() {
+	if !reflect.DeepEqual(again.Message(), msg("a")) || !again.Redelivered() {
 		t.Fatalf("redelivery = %+v redelivered=%v", again.Message(), again.Redelivered())
 	}
 	if err := again.Ack(); err != nil {
@@ -87,7 +88,7 @@ func TestMemoryRejectDropsToDeadLetters(t *testing.T) {
 	if ready, unacked, rejected := q.Counts(); ready != 0 || unacked != 0 || rejected != 1 {
 		t.Fatalf("ready=%d unacked=%d rejected=%d", ready, unacked, rejected)
 	}
-	if r := q.Rejected(); len(r) != 1 || r[0] != msg("bad") {
+	if r := q.Rejected(); len(r) != 1 || !reflect.DeepEqual(r[0], msg("bad")) {
 		t.Fatalf("rejected = %+v", r)
 	}
 }
@@ -105,7 +106,7 @@ func TestMemoryRecoverUnackedSimulatesAConsumerCrash(t *testing.T) {
 		t.Fatalf("ack from the crashed consumer: err = %v, want already settled", err)
 	}
 	next, redelivered := receive(t, q), receive(t, q)
-	if next.Message() != msg("b") || next.Redelivered() || redelivered.Message() != msg("a") || !redelivered.Redelivered() {
+	if !reflect.DeepEqual(next.Message(), msg("b")) || next.Redelivered() || !reflect.DeepEqual(redelivered.Message(), msg("a")) || !redelivered.Redelivered() {
 		t.Fatalf("after recovery got %+v (%v) then %+v (%v)", next.Message(), next.Redelivered(), redelivered.Message(), redelivered.Redelivered())
 	}
 }
@@ -137,7 +138,7 @@ func TestMemoryReceiveWaitsAndHonoursCancel(t *testing.T) {
 	_ = q.Publish(context.Background(), msg("late"))
 	select {
 	case d := <-got:
-		if d.Message() != msg("late") {
+		if !reflect.DeepEqual(d.Message(), msg("late")) {
 			t.Fatalf("got %+v", d.Message())
 		}
 	case <-time.After(time.Second):
