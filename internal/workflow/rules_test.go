@@ -1,0 +1,94 @@
+package workflow
+
+import (
+	"errors"
+	"reflect"
+	"testing"
+
+	"github.com/Minaqu28/IF3110_K03-06/internal/authorization"
+)
+
+func TestRequiredGroups(t *testing.T) {
+	const db = 7
+	edit, view := authorization.AccessViewEdit, authorization.AccessViewOnly
+	cases := []struct {
+		name   string
+		grants []GroupGrant
+		want   []RequiredApprover
+		err    error
+	}{
+		{
+			name: "every edit group with a leader, sorted by group",
+			grants: []GroupGrant{
+				{GroupID: 30, DatabaseID: db, LeaderID: 300, Level: edit},
+				{GroupID: 10, DatabaseID: db, LeaderID: 100, Level: edit},
+				{GroupID: 20, DatabaseID: db, LeaderID: 200, Level: edit},
+			},
+			want: []RequiredApprover{{10, 100}, {20, 200}, {30, 300}},
+		},
+		{
+			name: "view-only groups are not required",
+			grants: []GroupGrant{
+				{GroupID: 10, DatabaseID: db, LeaderID: 100, Level: edit},
+				{GroupID: 20, DatabaseID: db, LeaderID: 200, Level: view},
+			},
+			want: []RequiredApprover{{10, 100}},
+		},
+		{
+			name: "edit groups without a leader are skipped",
+			grants: []GroupGrant{
+				{GroupID: 10, DatabaseID: db, LeaderID: 0, Level: edit},
+				{GroupID: 20, DatabaseID: db, LeaderID: 200, Level: edit},
+			},
+			want: []RequiredApprover{{20, 200}},
+		},
+		{
+			name: "grants on other databases are ignored",
+			grants: []GroupGrant{
+				{GroupID: 10, DatabaseID: db + 1, LeaderID: 100, Level: edit},
+				{GroupID: 20, DatabaseID: db, LeaderID: 200, Level: edit},
+			},
+			want: []RequiredApprover{{20, 200}},
+		},
+		{
+			name: "a group listed twice is required once",
+			grants: []GroupGrant{
+				{GroupID: 10, DatabaseID: db, LeaderID: 100, Level: edit},
+				{GroupID: 10, DatabaseID: db, LeaderID: 100, Level: edit},
+			},
+			want: []RequiredApprover{{10, 100}},
+		},
+		{
+			name: "one leader of two groups approves once per group",
+			grants: []GroupGrant{
+				{GroupID: 10, DatabaseID: db, LeaderID: 100, Level: edit},
+				{GroupID: 20, DatabaseID: db, LeaderID: 100, Level: edit},
+			},
+			want: []RequiredApprover{{10, 100}, {20, 100}},
+		},
+		{
+			name: "unknown access level is not edit",
+			grants: []GroupGrant{
+				{GroupID: 10, DatabaseID: db, LeaderID: 100, Level: authorization.AccessLevel("ADMIN")},
+			},
+			err: ErrNoApprovers,
+		},
+		{
+			name:   "no edit group with a leader",
+			grants: []GroupGrant{{GroupID: 10, DatabaseID: db, LeaderID: 100, Level: view}},
+			err:    ErrNoApprovers,
+		},
+		{name: "no grants", err: ErrNoApprovers},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := RequiredGroups(db, c.grants)
+			if !errors.Is(err, c.err) {
+				t.Fatalf("err = %v, want %v", err, c.err)
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Fatalf("got %+v, want %+v", got, c.want)
+			}
+		})
+	}
+}

@@ -42,6 +42,17 @@ func (s *RevisionPostgresStore) LockRevision(ctx context.Context, databaseID, re
 		return domain.MigrationRevision{}, err
 	}
 	defer tx.Rollback()
+	locked, err := lockRevisionTx(ctx, tx, databaseID, revisionID)
+	if err != nil {
+		return domain.MigrationRevision{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.MigrationRevision{}, err
+	}
+	return locked, nil
+}
+
+func lockRevisionTx(ctx context.Context, tx *sql.Tx, databaseID, revisionID int64) (domain.MigrationRevision, error) {
 	rev, err := scanRevision(tx.QueryRowContext(ctx, `
 		SELECT `+revisionColumns+` FROM migration_revisions
 		WHERE database_id = $1 AND id = $2 FOR UPDATE`, databaseID, revisionID))
@@ -58,9 +69,6 @@ func (s *RevisionPostgresStore) LockRevision(ctx context.Context, databaseID, re
 		RETURNING `+revisionColumns, revisionID, domain.ComputeDefinitionHash(rev)))
 	if err != nil {
 		return domain.MigrationRevision{}, adminError(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return domain.MigrationRevision{}, err
 	}
 	return locked, nil
 }

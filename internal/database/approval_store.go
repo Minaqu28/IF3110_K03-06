@@ -22,9 +22,20 @@ func (s *ApprovalPostgresStore) CreateReview(ctx context.Context, review domain.
 		return domain.ReviewRequest{}, err
 	}
 	defer tx.Rollback()
+	created, err := createReviewTx(ctx, tx, review)
+	if err != nil {
+		return domain.ReviewRequest{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.ReviewRequest{}, err
+	}
+	return created, nil
+}
+
+func createReviewTx(ctx context.Context, tx *sql.Tx, review domain.ReviewRequest) (domain.ReviewRequest, error) {
 	var hash string
 	var locked bool
-	err = tx.QueryRowContext(ctx, `
+	err := tx.QueryRowContext(ctx, `
 		SELECT definition_hash, locked_at IS NOT NULL FROM migration_revisions
 		WHERE id = $1 FOR SHARE`, review.RevisionID).Scan(&hash, &locked)
 	if err != nil {
@@ -41,9 +52,6 @@ func (s *ApprovalPostgresStore) CreateReview(ctx context.Context, review domain.
 		Scan(&created.ID, &created.RequestedAt)
 	if err != nil {
 		return domain.ReviewRequest{}, adminError(err)
-	}
-	if err := tx.Commit(); err != nil {
-		return domain.ReviewRequest{}, err
 	}
 	return created, nil
 }
