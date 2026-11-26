@@ -3,10 +3,12 @@ package database
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 	"github.com/Minaqu28/IF3110_K03-06/internal/explorer"
+	"github.com/Minaqu28/IF3110_K03-06/internal/migrationengine"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -25,7 +27,7 @@ func conflict(message string) refusal {
 	return refusal{code: ErrorCodeLedgerConflict, message: message}
 }
 
-func runNormal(ctx context.Context, conn *pgx.Conn, req domain.ExecutionRequest, rev domain.MigrationRevision, version int64, result domain.ExecutionResult) (domain.ExecutionResult, error) {
+func (e *TargetExecutor) runNormal(ctx context.Context, conn *pgx.Conn, req domain.ExecutionRequest, rev domain.MigrationRevision, version int64, result domain.ExecutionResult) (domain.ExecutionResult, error) {
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return result, err
@@ -67,8 +69,16 @@ func runNormal(ctx context.Context, conn *pgx.Conn, req domain.ExecutionRequest,
 	if err := plan.record(ctx, tx); err != nil {
 		return result, err
 	}
+	if e.beforeCommit != nil {
+		e.beforeCommit(conn.PgConn().PID())
+	}
 	if err := tx.Commit(ctx); err != nil {
-		return result, err
+		if pgErr, ok := commitRejected(err); ok {
+			return refused(result, pgErr.Code, describeError(err)), nil
+		}
+		result.Status, result.ErrorCode = domain.ExecutionStatusUnknown, ErrorCodeCommitUncertain
+		result.ErrorMessage = fmt.Errorf("%w: %w", migrationengine.ErrCommitUncertain, err).Error()
+		return result, nil
 	}
 	result.Status, result.AffectedRows = domain.ExecutionStatusSucceeded, affected
 	return result, nil
@@ -119,4 +129,16 @@ func runStatements(ctx context.Context, tx pgx.Tx, sql string) (int64, error) {
 		firstErr = err
 	}
 	return affected, firstErr
+}
+
+func commitRejected(err error) (*pgconn.PgError, bool) {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return nil, false
+	}
+	severity := pgErr.SeverityUnlocalized
+	if severity == "" {
+		severity = pgErr.Severity
+	}
+	return pgErr, severity == "ERROR"
 }

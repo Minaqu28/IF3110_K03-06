@@ -16,6 +16,7 @@ const (
 	ErrorCodeIrreversible       = "IRREVERSIBLE"
 	ErrorCodeTransactionControl = "TRANSACTION_CONTROL"
 	ErrorCodeTransactionEnded   = "TRANSACTION_ENDED"
+	ErrorCodeCommitUncertain    = "COMMIT_UNCERTAIN"
 )
 
 type TargetExecutor struct {
@@ -23,6 +24,8 @@ type TargetExecutor struct {
 	options  TargetOptions
 	progress migrationengine.ProgressSink
 	now      func() time.Time
+
+	beforeCommit func(pid uint32)
 }
 
 func NewTargetExecutor(store *AdminPostgresStore, options TargetOptions, progress migrationengine.ProgressSink) *TargetExecutor {
@@ -51,7 +54,7 @@ func (e *TargetExecutor) Execute(ctx context.Context, req domain.ExecutionReques
 		return domain.ExecutionResult{}, err
 	}
 	result := domain.ExecutionResult{ExecutionID: req.ExecutionID, RevertsExecutionID: req.TargetExecutionID, StartedAt: started}
-	result, err = runNormal(ctx, target.conn, req, rev, version, result)
+	result, err = e.runNormal(ctx, target.conn, req, rev, version, result)
 	if err != nil {
 		return domain.ExecutionResult{}, err
 	}
