@@ -5,12 +5,13 @@ import "time"
 type ExecutionStatus string
 
 const (
-	ExecutionStatusPending   ExecutionStatus = "PENDING"
-	ExecutionStatusRunning   ExecutionStatus = "RUNNING"
-	ExecutionStatusSucceeded ExecutionStatus = "SUCCEEDED"
-	ExecutionStatusFailed    ExecutionStatus = "FAILED"
-	ExecutionStatusPartial   ExecutionStatus = "PARTIAL"
-	ExecutionStatusUnknown   ExecutionStatus = "UNKNOWN"
+	ExecutionStatusPending           ExecutionStatus = "PENDING"
+	ExecutionStatusRunning           ExecutionStatus = "RUNNING"
+	ExecutionStatusSucceeded         ExecutionStatus = "SUCCEEDED"
+	ExecutionStatusFailed            ExecutionStatus = "FAILED"
+	ExecutionStatusPartial           ExecutionStatus = "PARTIAL"
+	ExecutionStatusUnknown           ExecutionStatus = "UNKNOWN"
+	ExecutionStatusPartiallyReverted ExecutionStatus = "PARTIALLY_REVERTED"
 )
 
 type ExecutionRequest struct {

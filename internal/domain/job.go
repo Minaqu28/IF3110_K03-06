@@ -13,7 +13,16 @@ const (
 	JobStatusSucceeded           JobStatus = "SUCCEEDED"
 	JobStatusFailed              JobStatus = "FAILED"
 	JobStatusNeedsReconciliation JobStatus = "NEEDS_RECONCILIATION"
+	JobStatusCancelled           JobStatus = "CANCELLED"
 )
+
+func (s JobStatus) Terminal() bool {
+	switch s {
+	case JobStatusSucceeded, JobStatusFailed, JobStatusCancelled:
+		return true
+	}
+	return false
+}
 
 type BatchStatus string
 

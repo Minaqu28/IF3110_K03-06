@@ -27,6 +27,7 @@ const (
 )
 
 type BatchConfig struct {
+	Table        string `json:"table"`
 	CursorColumn string `json:"cursor_column"`
 	BatchSize    int    `json:"batch_size"`
 }
