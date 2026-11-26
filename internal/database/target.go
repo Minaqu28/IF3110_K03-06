@@ -18,10 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-const (
-	targetConnectTimeout   = 5 * time.Second
-	targetStatementTimeout = "10s"
-)
+const targetConnectTimeout = 5 * time.Second
 
 var (
 	_ explorer.Store               = (*AdminPostgresStore)(nil)
@@ -44,36 +41,11 @@ func TargetDSN(c domain.Connection, password string) string {
 }
 
 func (s *AdminPostgresStore) OpenTarget(ctx context.Context, dbID int64, readOnly bool) (explorer.Target, error) {
-	var (
-		c         domain.Connection
-		encrypted []byte
-	)
-	err := s.db.QueryRowContext(ctx, `
-		SELECT `+connectionColumns+`, password_encrypted
-		FROM database_connections WHERE id = $1`, dbID).
-		Scan(&c.ID, &c.Name, &c.Host, &c.Port, &c.DBname, &c.DBuser, &c.SSLMode, &encrypted)
+	target, err := s.openTarget(ctx, dbID, ViewerTargetOptions(readOnly))
 	if err != nil {
-		return nil, adminError(err)
+		return nil, err
 	}
-	password, err := s.DecryptPassword(encrypted)
-	if err != nil {
-		return nil, &explorer.ConnectError{Reason: "kredensial tersimpan tidak valid.", Err: err}
-	}
-	config, err := pgx.ParseConfig(TargetDSN(c, password))
-	if err != nil {
-		return nil, &explorer.ConnectError{Reason: "konfigurasi koneksi database tidak valid.", Err: err}
-	}
-	config.ConnectTimeout = targetConnectTimeout
-	config.RuntimeParams["application_name"] = "if3110-explorer"
-	config.RuntimeParams["statement_timeout"] = targetStatementTimeout
-	if readOnly {
-		config.RuntimeParams["default_transaction_read_only"] = "on"
-	}
-	conn, err := pgx.ConnectConfig(ctx, config)
-	if err != nil {
-		return nil, describeConnectError(err)
-	}
-	return &pgTarget{conn: conn, readOnly: readOnly}, nil
+	return target, nil
 }
 
 func describeConnectError(err error) error {
