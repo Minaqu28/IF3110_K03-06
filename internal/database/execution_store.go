@@ -92,3 +92,25 @@ func (s *ExecutionPostgresStore) GetExecution(ctx context.Context, executionID s
 	}
 	return req, res, nil
 }
+
+func (s *ExecutionPostgresStore) FinishExecution(ctx context.Context, res domain.ExecutionResult) error {
+	if res.ExecutionID == "" {
+		return admin.ErrInvalidInput
+	}
+	var finishedAt sql.NullTime
+	if res.FinishedAt != nil {
+		finishedAt = sql.NullTime{Time: *res.FinishedAt, Valid: true}
+	}
+	return rowsAffected(s.db.ExecContext(ctx, `
+		UPDATE migration_executions
+		SET status         = $2,
+		    applied_batches = GREATEST(applied_batches, $3),
+		    affected_rows   = GREATEST(affected_rows, $4),
+		    error_code      = $5,
+		    error_message   = $6,
+		    started_at      = COALESCE(started_at, $7),
+		    finished_at     = COALESCE($8, finished_at)
+		WHERE id = $1`,
+		res.ExecutionID, string(res.Status), res.AppliedBatches, res.AffectedRows,
+		nullString(res.ErrorCode), nullString(res.ErrorMessage), res.StartedAt, finishedAt))
+}

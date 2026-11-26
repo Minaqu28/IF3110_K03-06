@@ -16,10 +16,16 @@ import (
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/authentication"
 	"github.com/Minaqu28/IF3110_K03-06/internal/database"
+	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 	"github.com/Minaqu28/IF3110_K03-06/internal/explorer"
 	"github.com/Minaqu28/IF3110_K03-06/internal/http"
 	"github.com/Minaqu28/IF3110_K03-06/internal/migration"
+	"github.com/Minaqu28/IF3110_K03-06/internal/migrationengine"
 	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
+	"github.com/Minaqu28/IF3110_K03-06/internal/queue"
+	"github.com/Minaqu28/IF3110_K03-06/internal/worker"
+	"github.com/Minaqu28/IF3110_K03-06/internal/workflow"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func main() {
@@ -65,6 +71,7 @@ func run() error {
 	if err := database.BootstrapAdmin(ctx, db, os.Getenv("BOOTSTRAP_ADMIN_USERNAME"), os.Getenv("BOOTSTRAP_ADMIN_PASSWORD")); err != nil {
 		return err
 	}
+
 	authService := authentication.NewService(database.NewPostgresStore(db), nil)
 	adminStore, err := database.NewAdminPostgresStore(db, os.Getenv("DB_CREDENTIAL_KEY"))
 	if err != nil {
@@ -79,13 +86,60 @@ func run() error {
 	adminHandler := httpserver.NewAdminHandler(adminService, authHandler, pages)
 	databaseHandler := httpserver.NewDatabaseHandler(explorer.NewService(adminService, adminStore), authHandler, pages)
 
+	workerCtx, cancelWorkers := context.WithCancel(context.Background())
+	defer cancelWorkers()
+
+	publisher, consumer, closeQueue, err := initQueue(workerCtx)
+	if err != nil {
+		return err
+	}
+	defer closeQueue()
+
+	approvalStore := database.NewApprovalPostgresStore(db)
+	revisionStore := database.NewRevisionPostgresStore(db)
+	executionStore := database.NewExecutionPostgresStore(db)
+	historyStore := database.NewHistoryPostgresStore(db)
+	jobStore := database.NewJobPostgresStore(db)
+	submitStore := database.NewSubmitPostgresStore(db)
+	lockStore := database.NewLockPostgresStore(db, 30*time.Second)
+
+	targetExecutor := database.NewTargetExecutor(
+		adminStore,
+		database.WorkerTargetOptions(database.DefaultMigrationBatchTimeout),
+		migrationengine.ProgressSink(func(ctx context.Context, executionID string, progress domain.BatchProgress) error {
+			return jobStore.UpdateProgressByExecution(ctx, executionID, progress)
+		}),
+	)
+	engine := migrationengine.NewEngine(revisionStore, historyStore, targetExecutor, executionStore)
+	authorizer := workflow.NewExecutionAuthorizer(adminService, submitStore)
+	reviewService := workflow.NewReviewService(adminService, approvalStore, approvalStore, approvalStore)
+	submitService := workflow.NewSubmitService(adminService, revisionStore, adminStore, submitStore, publisher, jobStore)
+	queryService := workflow.NewQueryService(adminService, revisionStore, historyStore)
+	jobService := workflow.NewJobService(adminService, reviewService, approvalStore, submitService, jobStore)
+	workflowHandler := httpserver.NewWorkflowHandler(authHandler, queryService, jobService)
+
+	outboxRelay := workflow.NewOutboxRelay(jobStore, publisher, workflow.DefaultRelayInterval, workflow.DefaultRelayBatch)
+	workerRunner := worker.NewWorker(consumer, jobStore, lockStore, authorizer, engine, worker.Config{
+		FencedStore: func(owner string, token int64) worker.JobStateStore {
+			return jobStore.Fenced(owner, token)
+		},
+	})
+
+	go outboxRelay.Run(workerCtx)
+	go runJobSweeper(workerCtx, jobStore, 30*time.Second)
+	go func() {
+		if err := workerRunner.Run(workerCtx); err != nil && workerCtx.Err() == nil {
+			slog.Error("worker exited with error", slog.String("event", "worker.fatal"), slog.String("status", "error"), slog.String("error", err.Error()))
+		}
+	}()
+
 	addr := os.Getenv("HTTP_ADDR")
 	if addr == "" {
 		addr = ":8080"
 	}
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpserver.NewApplicationRouter(authHandler, adminHandler, databaseHandler, static, db.PingContext),
+		Handler:           httpserver.NewApplicationRouterWithWorkflow(authHandler, adminHandler, databaseHandler, workflowHandler, static, db.PingContext),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -96,6 +150,7 @@ func run() error {
 	defer done()
 	go func() {
 		<-stop.Done()
+		cancelWorkers()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = server.Shutdown(ctx)
@@ -106,4 +161,54 @@ func run() error {
 		return err
 	}
 	return nil
+}
+
+func initQueue(ctx context.Context) (workflow.JobPublisher, worker.JobConsumer, func(), error) {
+	amqpURL := strings.TrimSpace(os.Getenv("AMQP_URL"))
+	if amqpURL == "" {
+		mem := queue.NewMemory()
+		return mem, mem, func() {}, nil
+	}
+	queueName := strings.TrimSpace(os.Getenv("AMQP_QUEUE"))
+	if queueName == "" {
+		queueName = "migration_jobs"
+	}
+	conn, err := amqp.Dial(amqpURL)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	pub, err := queue.NewRabbitPublisher(conn, queueName)
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, nil, err
+	}
+	con, err := queue.NewRabbitConsumer(ctx, conn, queueName, 1)
+	if err != nil {
+		_ = pub.Close()
+		_ = conn.Close()
+		return nil, nil, nil, err
+	}
+	cleanup := func() {
+		_ = con.Close()
+		_ = pub.Close()
+		_ = conn.Close()
+	}
+	return pub, con, cleanup, nil
+}
+
+func runJobSweeper(ctx context.Context, jobs *database.JobPostgresStore, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if swept, err := jobs.SweepExpiredJobs(ctx); err != nil && ctx.Err() == nil {
+			slog.Error("sweep expired jobs failed", slog.String("event", "worker.sweep"), slog.String("status", "error"), slog.String("error", err.Error()))
+		} else if swept > 0 {
+			slog.Warn("swept expired worker jobs", slog.String("event", "worker.sweep"), slog.String("status", "ok"), slog.Int("swept", swept))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

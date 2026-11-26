@@ -103,3 +103,25 @@ func scanDecision(row rowScanner) (domain.ApprovalDecision, error) {
 	}
 	return d, nil
 }
+
+func (s *ApprovalPostgresStore) ListReviewRequests(ctx context.Context, databaseID int64) ([]domain.ReviewRequest, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT q.id, q.revision_id, q.definition_hash, q.status, q.requested_by, q.requested_at, q.resolved_at
+		FROM review_requests q
+		JOIN migration_revisions r ON r.id = q.revision_id
+		WHERE r.database_id = $1
+		ORDER BY q.requested_at DESC, q.id DESC`, databaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var reviews []domain.ReviewRequest
+	for rows.Next() {
+		r, err := scanReview(rows)
+		if err != nil {
+			return nil, err
+		}
+		reviews = append(reviews, r)
+	}
+	return reviews, rows.Err()
+}

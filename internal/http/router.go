@@ -25,6 +25,10 @@ func NewAuthenticatedRouter(authenticationHandler *AuthenticationHandler, static
 }
 
 func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, static fs.FS, health func(context.Context) error) http.Handler {
+	return NewApplicationRouterWithWorkflow(authenticationHandler, adminHandler, databaseHandler, nil, static, health)
+}
+
+func NewApplicationRouterWithWorkflow(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, workflowHandler *WorkflowHandler, static fs.FS, health func(context.Context) error) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler(health))
 	mux.HandleFunc("GET /{$}", authenticationHandler.Home)
@@ -58,6 +62,14 @@ func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHan
 		mux.HandleFunc("POST /databases/{id}/migrations", databaseHandler.CreateMigration)
 		mux.HandleFunc("POST /databases/{id}/migrations/{version}/update", databaseHandler.UpdateMigration)
 		mux.HandleFunc("POST /databases/{id}/migrations/{version}/execute", databaseHandler.ExecuteMigration)
+	}
+	if workflowHandler != nil {
+		mux.HandleFunc("GET /api/databases/{id}/revisions", workflowHandler.ListRevisions)
+		mux.HandleFunc("GET /api/databases/{id}/history", workflowHandler.ListHistory)
+		mux.HandleFunc("GET /api/databases/{id}/reviews", workflowHandler.ListReviews)
+		mux.HandleFunc("POST /api/reviews/{reviewId}/decide", workflowHandler.DecideApproval)
+		mux.HandleFunc("POST /api/databases/{id}/executions", workflowHandler.SubmitExecution)
+		mux.HandleFunc("GET /api/jobs/{jobId}", workflowHandler.GetJob)
 	}
 	if static != nil {
 		mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))

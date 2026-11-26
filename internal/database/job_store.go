@@ -92,3 +92,31 @@ func progressJSON(p *domain.BatchProgress) (sql.NullString, error) {
 	}
 	return sql.NullString{String: string(b), Valid: true}, nil
 }
+
+func (s *JobPostgresStore) UpdateProgressByExecution(ctx context.Context, executionID string, progress domain.BatchProgress) error {
+	raw, err := progressJSON(&progress)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE migration_jobs
+		SET progress = $2::jsonb, updated_at = now()
+		WHERE execution_id = $1 AND status = 'RUNNING'`, executionID, raw); err != nil {
+		return adminError(err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE migration_executions
+		SET applied_batches = GREATEST(applied_batches, $2),
+		    affected_rows   = GREATEST(affected_rows, $3),
+		    last_cursor     = COALESCE(NULLIF($4, ''), last_cursor)
+		WHERE id = $1 AND status NOT IN ('SUCCEEDED', 'FAILED')`,
+		executionID, progress.Completed, progress.AffectedRows, progress.LastCursor); err != nil {
+		return adminError(err)
+	}
+	return tx.Commit()
+}

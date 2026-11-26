@@ -44,12 +44,26 @@ func (s *HistoryPostgresStore) AppendAttempt(ctx context.Context, attempt domain
 }
 
 func (s *HistoryPostgresStore) ListAttempts(ctx context.Context, databaseID int64) ([]domain.ExecutionAttempt, error) {
+	return s.ListExecutionHistory(ctx, databaseID, false)
+}
+
+func (s *HistoryPostgresStore) ListExecutionHistory(ctx context.Context, databaseID int64, hideRollback bool) ([]domain.ExecutionAttempt, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT attempt_id, execution_id, attempt_number, status, sql_snapshot,
-		       error_code, error_message, started_at, finished_at
-		FROM execution_attempts
-		WHERE database_id = $1
-		ORDER BY started_at, attempt_id`, databaseID)
+		SELECT a.attempt_id, a.execution_id, a.attempt_number, a.status, a.sql_snapshot,
+		       a.error_code, a.error_message, a.started_at, a.finished_at
+		FROM execution_attempts a
+		WHERE a.database_id = $1
+		  AND (
+		    NOT $2
+		    OR a.execution_id NOT IN (
+		      SELECT id FROM migration_executions
+		      WHERE database_id = $1 AND action = 'ROLLBACK' AND status = 'SUCCEEDED' AND target_execution_id IS NOT NULL
+		      UNION
+		      SELECT target_execution_id FROM migration_executions
+		      WHERE database_id = $1 AND action = 'ROLLBACK' AND status = 'SUCCEEDED' AND target_execution_id IS NOT NULL
+		    )
+		  )
+		ORDER BY a.started_at, a.attempt_id`, databaseID, hideRollback)
 	if err != nil {
 		return nil, err
 	}
