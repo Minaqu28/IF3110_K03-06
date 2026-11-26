@@ -1,0 +1,26 @@
+{
+  "api_response_time_ms": {
+    "p50": 98.18650199999999,
+    "p95": 375.26795225,
+    "avg": 138.71226469699872,
+    "max": 934.636975
+  },
+  "request_throughput_rps": 101.38084632902925,
+  "total_requests": 12726,
+  "http_error_rate": 0.013672795851013672,
+  "queue_wait_ms": {
+    "p50": 407.5,
+    "p95": 607,
+    "avg": 424.8333333333333,
+    "max": 781
+  },
+  "job_completion_duration_ms": {
+    "p50": 407.5,
+    "p95": 607,
+    "avg": 425.9492753623188,
+    "max": 1084
+  },
+  "jobs_completed": 276,
+  "job_completion_throughput_per_sec": 2.1987359411293474,
+  "job_execution_success_rate": 1
+}

@@ -25,6 +25,7 @@ const jobsCompleted = new Counter('jobs_completed_total');
 const jobsSubmitted = new Counter('jobs_submitted_total');
 
 export const options = {
+  noCookiesReset: true,
   scenarios: {
     api_read_access: {
       executor: 'ramping-vus',
@@ -130,6 +131,10 @@ function ensureLogin() {
 function recordAPI(res, okCheck) {
   apiLatencyMs.add(res.timings.duration);
   apiErrorRate.add(!okCheck);
+  if (res.status === 401) {
+    vuSession.authenticated = false;
+    vuSession.csrf = '';
+  }
 }
 
 export function apiReadWorkload() {
@@ -207,6 +212,7 @@ function submitAndPollJob(item, scenarioTag) {
   recordAPI(submitRes, accepted);
 
   if (!accepted) {
+    sleep(0.5);
     return;
   }
 
