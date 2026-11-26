@@ -53,6 +53,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	spa, err := fs.Sub(frontend.Files, ".")
+	if err != nil {
+		return err
+	}
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		return errors.New("DATABASE_URL is required")

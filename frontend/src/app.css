@@ -1,0 +1,181 @@
+:root {
+  font: 16px/1.5 system-ui, sans-serif;
+  color: #172033;
+  background: #f4f6fa;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+a {
+  color: #164a9d;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  padding: 0.55rem 0.85rem;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+:focus-visible {
+  outline: 3px solid #1459c5;
+  outline-offset: 3px;
+}
+
+.skip-link {
+  position: absolute;
+  top: 0;
+  left: -100vw;
+  padding: 0.5rem;
+  background: #fff;
+}
+
+.skip-link:focus {
+  left: 0.5rem;
+  z-index: 2;
+}
+
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  background: #fff;
+  border-bottom: 1px solid #d6deea;
+}
+
+.brand {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.site-header nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+main {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+
+h1 {
+  font-size: clamp(1.5rem, 4vw, 2rem);
+}
+
+h2 {
+  font-size: 1.2rem;
+}
+
+.field {
+  margin: 1rem 0;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-weight: 600;
+}
+
+.field input,
+.field select {
+  display: block;
+  width: min(100%, 28rem);
+  min-height: 2.75rem;
+  padding: 0.5rem;
+  border: 1px solid #8593a8;
+}
+
+.error {
+  color: #9c1726;
+}
+
+.panel,
+.card-list li,
+form {
+  padding: 1rem;
+  background: #fff;
+  border: 1px solid #d6deea;
+}
+
+.panel {
+  margin: 1rem 0;
+}
+
+.card-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.card-list li a {
+  display: block;
+  min-height: 2.5rem;
+}
+
+.table-scroll {
+  overflow: auto;
+  background: #fff;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+caption {
+  padding: 0.75rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+th,
+td {
+  padding: 0.5rem;
+  border: 1px solid #d6deea;
+  text-align: left;
+  white-space: nowrap;
+}
+
+#notice:not(:empty) {
+  padding: 0.75rem 1rem;
+  background: #edf3ff;
+}
+
+@media (min-width: 42rem) {
+  main {
+    padding: 2rem;
+  }
+
+  .card-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 65rem) {
+  .card-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
