@@ -15,6 +15,8 @@ const (
 	MaxBatchSize = 100000
 )
 
+const ErrUnsafeRevertMessage = "pembatalan tidak aman; buat migration perbaikan baru"
+
 var ErrInvalidBatch = fmt.Errorf("%w: invalid batch migration", admin.ErrInvalidInput)
 
 var placeholder = regexp.MustCompile(`\$([0-9]+)`)

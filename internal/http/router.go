@@ -19,16 +19,15 @@ func NewRouter(pages *template.Template, static fs.FS) http.Handler {
 	return observabilityMiddleware(securityHeaders(mux))
 }
 
-// NewAuthenticatedRouter wires the authentication handler when a session store is ready.
 func NewAuthenticatedRouter(authenticationHandler *AuthenticationHandler, static fs.FS, health func(context.Context) error) http.Handler {
 	return NewApplicationRouter(authenticationHandler, nil, nil, static, health)
 }
 
-func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, static fs.FS, health func(context.Context) error) http.Handler {
-	return NewApplicationRouterWithWorkflow(authenticationHandler, adminHandler, databaseHandler, nil, static, health)
+func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, static fs.FS, health func(context.Context) error, routes ...func(*http.ServeMux)) http.Handler {
+	return NewApplicationRouterWithWorkflow(authenticationHandler, adminHandler, databaseHandler, nil, static, health, routes)
 }
 
-func NewApplicationRouterWithWorkflow(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, workflowHandler *WorkflowHandler, static fs.FS, health func(context.Context) error) http.Handler {
+func NewApplicationRouterWithWorkflow(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, workflowHandler *WorkflowHandler, static fs.FS, health func(context.Context) error, routes ...func(*http.ServeMux)) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler(health))
 	mux.HandleFunc("GET /{$}", authenticationHandler.Home)
@@ -70,6 +69,10 @@ func NewApplicationRouterWithWorkflow(authenticationHandler *AuthenticationHandl
 		mux.HandleFunc("POST /api/reviews/{reviewId}/decide", workflowHandler.DecideApproval)
 		mux.HandleFunc("POST /api/databases/{id}/executions", workflowHandler.SubmitExecution)
 		mux.HandleFunc("GET /api/jobs/{jobId}", workflowHandler.GetJob)
+	}
+
+	for _, register := range routes {
+		register(mux)
 	}
 	if static != nil {
 		mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))

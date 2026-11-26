@@ -4,19 +4,24 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 	"github.com/Minaqu28/IF3110_K03-06/internal/worker"
 )
 
-var _ worker.JobStateStore = (*JobPostgresStore)(nil)
+var _ worker.JobStore = (*JobPostgresStore)(nil)
 
 func (s *JobPostgresStore) SaveJob(ctx context.Context, job domain.Job) error {
-	return s.saveJob(ctx, job, nil)
+	return s.saveJob(ctx, job, nil, nil)
 }
 
-func (s *JobPostgresStore) saveJob(ctx context.Context, job domain.Job, guard func(context.Context, *sql.Tx) error) error {
+func (s *JobPostgresStore) SaveJobAfter(ctx context.Context, job domain.Job, notBefore time.Time) error {
+	return s.saveJob(ctx, job, nil, &notBefore)
+}
+
+func (s *JobPostgresStore) saveJob(ctx context.Context, job domain.Job, guard func(context.Context, *sql.Tx, string) error, notBefore *time.Time) error {
 	progress, err := progressJSON(job.Progress)
 	if err != nil {
 		return err
@@ -27,7 +32,7 @@ func (s *JobPostgresStore) saveJob(ctx context.Context, job domain.Job, guard fu
 	}
 	defer tx.Rollback()
 	if guard != nil {
-		if err := guard(ctx, tx); err != nil {
+		if err := guard(ctx, tx, job.ID); err != nil {
 			return err
 		}
 	}
@@ -36,11 +41,12 @@ func (s *JobPostgresStore) saveJob(ctx context.Context, job domain.Job, guard fu
 		UPDATE migration_jobs
 		SET status = $2, attempt_count = $3, progress = $4::jsonb,
 		    error_code = $5, error_message = $6, updated_at = now(),
+		    next_attempt_at = COALESCE($7, next_attempt_at),
 		    published_at = CASE WHEN $2 IN ('RETRY_WAIT', 'NEEDS_RECONCILIATION') THEN NULL ELSE published_at END
 		WHERE id = $1 AND status NOT IN ('SUCCEEDED', 'FAILED', 'CANCELLED')
 		RETURNING execution_id`,
 		job.ID, string(job.Status), job.AttemptCount, progress,
-		nullString(job.ErrorCode), nullString(job.ErrorMessage)).Scan(&executionID)
+		nullString(job.ErrorCode), nullString(job.ErrorMessage), notBefore).Scan(&executionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		var exists bool
 		if qErr := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM migration_jobs WHERE id = $1)`, job.ID).Scan(&exists); qErr != nil {

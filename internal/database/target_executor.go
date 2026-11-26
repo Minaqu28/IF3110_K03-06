@@ -17,6 +17,7 @@ var _ migrationengine.TargetExecutor = (*TargetExecutor)(nil)
 const (
 	ErrorCodeLedgerConflict     = "LEDGER_CONFLICT"
 	ErrorCodeIrreversible       = "IRREVERSIBLE"
+	ErrorCodeUnsafeRevert       = "UNSAFE_REVERT"
 	ErrorCodeTransactionControl = "TRANSACTION_CONTROL"
 	ErrorCodeTransactionEnded   = "TRANSACTION_ENDED"
 	ErrorCodeCommitUncertain    = "COMMIT_UNCERTAIN"
@@ -45,17 +46,15 @@ func (e *TargetExecutor) Execute(ctx context.Context, req domain.ExecutionReques
 	if (req.Mode != domain.ExecutionModeNormal && !batch) || batch != (rev.Batch != nil) {
 		return domain.ExecutionResult{}, admin.ErrInvalidInput
 	}
-	if batch && req.Action == domain.MigrationActionRollback {
-		return domain.ExecutionResult{}, admin.ErrInvalidInput
-	}
 	started := e.now()
 	var version int64
 	if err := e.store.db.QueryRowContext(ctx, `SELECT version FROM migrations WHERE id = $1 AND database_id = $2`,
 		req.MigrationID, req.DatabaseID).Scan(&version); err != nil {
 		return domain.ExecutionResult{}, adminError(err)
 	}
+	revert := req.Action == domain.MigrationActionRollback
 	var scope executionScope
-	if batch {
+	if batch && !revert {
 		var err error
 		if scope, err = e.loadScope(ctx, req); err != nil {
 			return domain.ExecutionResult{}, err
@@ -75,9 +74,12 @@ func (e *TargetExecutor) Execute(ctx context.Context, req domain.ExecutionReques
 		return domain.ExecutionResult{}, err
 	}
 	result := domain.ExecutionResult{ExecutionID: req.ExecutionID, RevertsExecutionID: req.TargetExecutionID, StartedAt: started}
-	if batch {
+	switch {
+	case batch && revert:
+		result, err = e.runBatchRevert(ctx, target.conn, req, rev, version, result)
+	case batch:
 		result, err = e.runBatchMode(ctx, target.conn, req, rev, version, scope, result)
-	} else {
+	default:
 		result, err = e.runNormal(ctx, target.conn, req, rev, version, result)
 	}
 	if err != nil {
@@ -91,9 +93,16 @@ func (e *TargetExecutor) Execute(ctx context.Context, req domain.ExecutionReques
 func refused(result domain.ExecutionResult, code, message string) domain.ExecutionResult {
 	result.Status, result.ErrorCode, result.ErrorMessage = domain.ExecutionStatusFailed, code, message
 	if result.AppliedBatches > 0 {
-		result.Status = domain.ExecutionStatusPartial
+		result.Status = partialStatus(result)
 	}
 	return result
+}
+
+func partialStatus(result domain.ExecutionResult) domain.ExecutionStatus {
+	if result.RevertsExecutionID != nil {
+		return domain.ExecutionStatusPartiallyReverted
+	}
+	return domain.ExecutionStatusPartial
 }
 
 func (e *TargetExecutor) commitResult(ctx context.Context, conn *pgx.Conn, tx pgx.Tx, result domain.ExecutionResult) (domain.ExecutionResult, bool) {

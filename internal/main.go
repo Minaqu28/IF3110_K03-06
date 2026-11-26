@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
@@ -10,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Minaqu28/IF3110_K03-06/frontend"
@@ -25,7 +28,7 @@ import (
 	"github.com/Minaqu28/IF3110_K03-06/internal/queue"
 	"github.com/Minaqu28/IF3110_K03-06/internal/worker"
 	"github.com/Minaqu28/IF3110_K03-06/internal/workflow"
-	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/rabbitmq/amqp091-go"
 )
 
 func main() {
@@ -37,6 +40,11 @@ func main() {
 }
 
 func run() error {
+	mode := flag.String("mode", "web", "web serves the application; worker runs migration jobs from the queue")
+	flag.Parse()
+	if *mode != "web" && *mode != "worker" {
+		return fmt.Errorf("unknown -mode %q: use web or worker", *mode)
+	}
 	pages, err := template.ParseFS(frontend.Files, "pages/*.html")
 	if err != nil {
 		return err
@@ -68,6 +76,14 @@ func run() error {
 	if err := database.Migrate(ctx, db, migration.Files); err != nil {
 		return err
 	}
+	if *mode == "worker" {
+		adminStore, err := database.NewAdminPostgresStore(db, os.Getenv("DB_CREDENTIAL_KEY"))
+		if err != nil {
+			return err
+		}
+		cancel()
+		return runWorker(db, adminStore, admin.NewService(adminStore, nil))
+	}
 	if err := database.BootstrapAdmin(ctx, db, os.Getenv("BOOTSTRAP_ADMIN_USERNAME"), os.Getenv("BOOTSTRAP_ADMIN_PASSWORD")); err != nil {
 		return err
 	}
@@ -85,6 +101,11 @@ func run() error {
 	}
 	adminHandler := httpserver.NewAdminHandler(adminService, authHandler, pages)
 	databaseHandler := httpserver.NewDatabaseHandler(explorer.NewService(adminService, adminStore), authHandler, pages)
+	jobRoutes, closeJobs, err := webJobRoutes(db, authHandler, adminStore, adminService)
+	if err != nil {
+		return err
+	}
+	defer closeJobs()
 
 	workerCtx, cancelWorkers := context.WithCancel(context.Background())
 	defer cancelWorkers()
@@ -139,14 +160,14 @@ func run() error {
 	}
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpserver.NewApplicationRouterWithWorkflow(authHandler, adminHandler, databaseHandler, workflowHandler, static, db.PingContext),
+		Handler:           httpserver.NewApplicationRouterWithWorkflow(authHandler, adminHandler, databaseHandler, workflowHandler, static, db.PingContext, jobRoutes),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 
-	stop, done := signal.NotifyContext(context.Background(), os.Interrupt)
+	stop, done := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer done()
 	go func() {
 		<-stop.Done()

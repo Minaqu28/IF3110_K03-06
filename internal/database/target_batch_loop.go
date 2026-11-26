@@ -112,7 +112,7 @@ func (e *TargetExecutor) report(ctx context.Context, executionID string, result 
 }
 
 func progressFailed(result domain.ExecutionResult, err error) domain.ExecutionResult {
-	result.Status, result.ErrorCode = domain.ExecutionStatusPartial, ErrorCodeInterrupted
+	result.Status, result.ErrorCode = partialStatus(result), ErrorCodeInterrupted
 	result.ErrorMessage = "stopped after a batch because its progress could not be saved: " + err.Error()
 	return result
 }
@@ -171,7 +171,7 @@ func interrupted(ctx context.Context, result domain.ExecutionResult) (domain.Exe
 	if result.AppliedBatches == 0 {
 		return result, ctx.Err()
 	}
-	result.Status, result.ErrorCode = domain.ExecutionStatusPartial, ErrorCodeInterrupted
+	result.Status, result.ErrorCode = partialStatus(result), ErrorCodeInterrupted
 	result.ErrorMessage = "stopped between batches; resume continues from the last checkpoint"
 	return result, nil
 }
