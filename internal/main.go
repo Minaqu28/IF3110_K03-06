@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log"
@@ -10,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Minaqu28/IF3110_K03-06/frontend"
@@ -28,6 +31,11 @@ func main() {
 }
 
 func run() error {
+	mode := flag.String("mode", "web", "web serves the application; worker runs migration jobs from the queue")
+	flag.Parse()
+	if *mode != "web" && *mode != "worker" {
+		return fmt.Errorf("unknown -mode %q: use web or worker", *mode)
+	}
 	pages, err := template.ParseFS(frontend.Files, "pages/*.html")
 	if err != nil {
 		return err
@@ -49,6 +57,14 @@ func run() error {
 	defer db.Close()
 	if err := database.Migrate(ctx, db, migration.Files); err != nil {
 		return err
+	}
+	if *mode == "worker" {
+		adminStore, err := database.NewAdminPostgresStore(db, os.Getenv("DB_CREDENTIAL_KEY"))
+		if err != nil {
+			return err
+		}
+		cancel()
+		return runWorker(db, adminStore, admin.NewService(adminStore, nil))
 	}
 	if err := database.BootstrapAdmin(ctx, db, os.Getenv("BOOTSTRAP_ADMIN_USERNAME"), os.Getenv("BOOTSTRAP_ADMIN_PASSWORD")); err != nil {
 		return err
@@ -80,7 +96,7 @@ func run() error {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	stop, done := signal.NotifyContext(context.Background(), os.Interrupt)
+	stop, done := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer done()
 	go func() {
 		<-stop.Done()

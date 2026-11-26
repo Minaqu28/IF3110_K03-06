@@ -59,7 +59,10 @@ func (w *Worker) handle(ctx context.Context, d JobDelivery) {
 		return
 	}
 	log.Info("job started", "attempt", job.AttemptCount, "action", msg.Action, "mode", msg.Mode, "redelivered", d.Redelivered())
+	run := w.active.track(msg.ExecutionID, job, jobs)
 	result, err := w.deps.Executor.Execute(runCtx, req)
+	w.active.untrack(msg.ExecutionID, run)
+	job = run.latest()
 	if cause := context.Cause(runCtx); errors.Is(cause, ErrLockLost) {
 		log.Error("the run lost its database lock", "error", err)
 	}

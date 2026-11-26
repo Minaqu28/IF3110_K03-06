@@ -28,6 +28,7 @@ type Worker struct {
 
 	heartbeat time.Duration
 	lockWait  time.Duration
+	active    activeRuns
 }
 
 func New(deps Dependencies, id string, log *slog.Logger) *Worker {
