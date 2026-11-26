@@ -15,6 +15,8 @@ type Dependencies struct {
 	Jobs       JobStore
 	Authorizer ExecutionAuthorizer
 	Executor   MigrationExecutor
+	Locks      DatabaseLocker
+	Fence      func(owner string, token int64) JobStore
 }
 
 type Worker struct {
@@ -23,13 +25,17 @@ type Worker struct {
 	log   *slog.Logger
 	now   func() time.Time
 	retry RetryPolicy
+
+	heartbeat time.Duration
+	lockWait  time.Duration
 }
 
 func New(deps Dependencies, id string, log *slog.Logger) *Worker {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Worker{deps: deps, id: id, log: log.With("worker", id), now: time.Now, retry: DefaultRetryPolicy()}
+	return &Worker{deps: deps, id: id, log: log.With("worker", id), now: time.Now, retry: DefaultRetryPolicy(),
+		heartbeat: DefaultHeartbeatInterval, lockWait: DefaultLockWait}
 }
 
 func (w *Worker) admit(ctx context.Context, log *slog.Logger, d JobDelivery) (domain.Job, bool) {

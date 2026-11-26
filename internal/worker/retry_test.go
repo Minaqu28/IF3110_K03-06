@@ -81,7 +81,7 @@ func TestHandleDelaysARetry(t *testing.T) {
 		return nil
 	}
 	h.handle(context.Background(), message())
-	if want := []string{"authorize", "save:RUNNING", "execute", "saveAfter:RETRY_WAIT", "ack"}; !equalEvents(h.events, want) {
+	if want := []string{"lock", "authorize", "save:RUNNING", "execute", "saveAfter:RETRY_WAIT", "ack", "release:w1:7"}; !equalEvents(h.events, want) {
 		t.Fatalf("events = %v, want %v", h.events, want)
 	}
 	if !notBefore.Equal(now.Add(2 * time.Second)) {
@@ -94,7 +94,7 @@ func TestHandleGivesUpAfterTheLastAttempt(t *testing.T) {
 	h.execErr = context.DeadlineExceeded
 	h.worker.retry.MaxAttempts = 1
 	h.handle(context.Background(), message())
-	if last := h.saves[len(h.saves)-1]; last.Status != domain.JobStatusFailed || last.ErrorCode != ErrorCodeTransient || h.events[len(h.events)-1] != "ack" {
+	if last := h.saves[len(h.saves)-1]; last.Status != domain.JobStatusFailed || last.ErrorCode != ErrorCodeTransient || h.events[len(h.events)-2] != "ack" {
 		t.Fatalf("final save = %+v, events = %v", last, h.events)
 	}
 }

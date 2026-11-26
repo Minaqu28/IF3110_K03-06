@@ -14,20 +14,25 @@ import (
 )
 
 type runHarness struct {
-	events    []string
-	saves     []domain.Job
-	saveErrs  []error
-	authErr   error
-	result    domain.ExecutionResult
-	execErr   error
-	requests  []domain.ExecutionRequest
-	saveCtxOK []bool
-	jobs      *delayingJobs
-	worker    *Worker
+	events     []string
+	saves      []domain.Job
+	saveErrs   []error
+	authErr    error
+	result     domain.ExecutionResult
+	execErr    error
+	requests   []domain.ExecutionRequest
+	saveCtxOK  []bool
+	jobs       *delayingJobs
+	locks      *mockDatabaseLocker
+	acquired   bool
+	acquireErr error
+	held       func() (bool, error)
+	fenced     []string
+	worker     *Worker
 }
 
 func newRunHarness() *runHarness {
-	h := &runHarness{result: domain.ExecutionResult{Status: domain.ExecutionStatusSucceeded}}
+	h := &runHarness{result: domain.ExecutionResult{Status: domain.ExecutionStatusSucceeded}, acquired: true}
 	jobs := &delayingJobs{mockJobStateStore: &mockJobStateStore{
 		getJob: func(context.Context, string) (domain.Job, error) { return queuedJob(), nil },
 		saveJob: func(ctx context.Context, job domain.Job) error {
@@ -52,7 +57,30 @@ func newRunHarness() *runHarness {
 		h.requests = append(h.requests, req)
 		return h.result, h.execErr
 	}}
-	h.worker = New(Dependencies{Jobs: jobs, Authorizer: auth, Executor: exec}, "w1", quietLog())
+	h.locks = &mockDatabaseLocker{
+		acquire: func(_ context.Context, databaseID int64, executionID, owner string) (int64, bool, error) {
+			h.events = append(h.events, "lock")
+			if !h.acquired || h.acquireErr != nil {
+				return 0, false, h.acquireErr
+			}
+			return 7, true, nil
+		},
+		heartbeat: func(context.Context, int64, string, int64) (bool, error) {
+			if h.held == nil {
+				return true, nil
+			}
+			return h.held()
+		},
+		release: func(_ context.Context, _ int64, owner string, token int64) error {
+			h.events = append(h.events, fmt.Sprintf("release:%s:%d", owner, token))
+			return nil
+		},
+	}
+	fence := func(owner string, token int64) JobStore {
+		h.fenced = append(h.fenced, fmt.Sprintf("%s:%d", owner, token))
+		return jobs
+	}
+	h.worker = New(Dependencies{Jobs: jobs, Authorizer: auth, Executor: exec, Locks: h.locks, Fence: fence}, "w1", quietLog())
 	return h
 }
 
@@ -72,7 +100,7 @@ func TestHandleSavesBeforeItAcks(t *testing.T) {
 	target := "exec-0"
 	msg.TargetExecutionID = &target
 	h.handle(context.Background(), msg)
-	want := []string{"authorize", "save:RUNNING", "execute", "save:SUCCEEDED", "ack"}
+	want := []string{"lock", "authorize", "save:RUNNING", "execute", "save:SUCCEEDED", "ack", "release:w1:7"}
 	if !slices.Equal(h.events, want) {
 		t.Fatalf("events = %v, want %v", h.events, want)
 	}
@@ -90,21 +118,21 @@ func TestHandleNeverAcksAnUnsavedResult(t *testing.T) {
 	h := newRunHarness()
 	h.saveErrs = []error{nil, errors.New("platform down")}
 	h.handle(context.Background(), message())
-	if want := []string{"authorize", "save:RUNNING", "execute", "save:SUCCEEDED", "requeue"}; !slices.Equal(h.events, want) {
+	if want := []string{"lock", "authorize", "save:RUNNING", "execute", "save:SUCCEEDED", "requeue", "release:w1:7"}; !slices.Equal(h.events, want) {
 		t.Fatalf("events = %v, want %v", h.events, want)
 	}
 
 	h = newRunHarness()
 	h.saveErrs = []error{errors.New("platform down")}
 	h.handle(context.Background(), message())
-	if want := []string{"authorize", "save:RUNNING", "requeue"}; !slices.Equal(h.events, want) {
+	if want := []string{"lock", "authorize", "save:RUNNING", "requeue", "release:w1:7"}; !slices.Equal(h.events, want) {
 		t.Fatalf("unsaved start: events = %v, want %v", h.events, want)
 	}
 
 	h = newRunHarness()
 	h.saveErrs = []error{admin.ErrConflict}
 	h.handle(context.Background(), message())
-	if want := []string{"authorize", "save:RUNNING", "ack"}; !slices.Equal(h.events, want) {
+	if want := []string{"lock", "authorize", "save:RUNNING", "ack", "release:w1:7"}; !slices.Equal(h.events, want) {
 		t.Fatalf("job finished elsewhere: events = %v, want %v", h.events, want)
 	}
 }
@@ -121,7 +149,7 @@ func TestHandleRecordsRefusalsWithoutExecuting(t *testing.T) {
 		h := newRunHarness()
 		h.authErr = c.err
 		h.handle(context.Background(), message())
-		if want := []string{"authorize", "save:FAILED", "ack"}; !slices.Equal(h.events, want) {
+		if want := []string{"lock", "authorize", "save:FAILED", "ack", "release:w1:7"}; !slices.Equal(h.events, want) {
 			t.Fatalf("%v: events = %v, want %v", c.err, h.events, want)
 		}
 		if h.saves[0].ErrorCode != c.code || h.saves[0].ErrorMessage == "" {
@@ -131,7 +159,7 @@ func TestHandleRecordsRefusalsWithoutExecuting(t *testing.T) {
 	h := newRunHarness()
 	h.authErr = errors.New("platform down")
 	h.handle(context.Background(), message())
-	if want := []string{"authorize", "requeue"}; !slices.Equal(h.events, want) {
+	if want := []string{"lock", "authorize", "requeue", "release:w1:7"}; !slices.Equal(h.events, want) {
 		t.Fatalf("authorizer unavailable: events = %v, want %v", h.events, want)
 	}
 }
@@ -152,7 +180,7 @@ func TestHandleSavesTheResultEvenAfterShutdownBegins(t *testing.T) {
 	msg := message()
 	msg.Mode = domain.ExecutionModeBatch
 	h.handle(ctx, msg)
-	if !ctxOK || retried.Status != domain.JobStatusRetryWait || retried.Progress == nil || retried.Progress.Completed != 2 || h.events[len(h.events)-1] != "ack" {
+	if !ctxOK || retried.Status != domain.JobStatusRetryWait || retried.Progress == nil || retried.Progress.Completed != 2 || h.events[len(h.events)-2] != "ack" {
 		t.Fatalf("retry save = %+v, ctx ok = %v, events = %v", retried, ctxOK, h.events)
 	}
 }
