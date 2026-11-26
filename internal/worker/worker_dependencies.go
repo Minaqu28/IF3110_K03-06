@@ -55,3 +55,9 @@ type JobConsumer interface {
 	// Receive menunggu satu delivery atau berhenti ketika context dibatalkan.
 	Receive(ctx context.Context) (JobDelivery, error)
 }
+
+type DatabaseLocker interface {
+	Acquire(ctx context.Context, databaseID int64, executionID, owner string) (token int64, acquired bool, err error)
+	Heartbeat(ctx context.Context, databaseID int64, owner string, token int64) (held bool, err error)
+	Release(ctx context.Context, databaseID int64, owner string, token int64) error
+}

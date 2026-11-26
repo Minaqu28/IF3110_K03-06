@@ -102,3 +102,32 @@ func (m *mockJobConsumer) Receive(ctx context.Context) (JobDelivery, error) {
 	}
 	return m.receive(ctx)
 }
+
+type mockDatabaseLocker struct {
+	acquire   func(context.Context, int64, string, string) (int64, bool, error)
+	heartbeat func(context.Context, int64, string, int64) (bool, error)
+	release   func(context.Context, int64, string, int64) error
+}
+
+var _ DatabaseLocker = (*mockDatabaseLocker)(nil)
+
+func (m *mockDatabaseLocker) Acquire(ctx context.Context, databaseID int64, executionID, owner string) (int64, bool, error) {
+	if m.acquire == nil {
+		return 0, false, errUnexpectedWorkerMockCall
+	}
+	return m.acquire(ctx, databaseID, executionID, owner)
+}
+
+func (m *mockDatabaseLocker) Heartbeat(ctx context.Context, databaseID int64, owner string, token int64) (bool, error) {
+	if m.heartbeat == nil {
+		return false, errUnexpectedWorkerMockCall
+	}
+	return m.heartbeat(ctx, databaseID, owner, token)
+}
+
+func (m *mockDatabaseLocker) Release(ctx context.Context, databaseID int64, owner string, token int64) error {
+	if m.release == nil {
+		return errUnexpectedWorkerMockCall
+	}
+	return m.release(ctx, databaseID, owner, token)
+}
