@@ -1,6 +1,3 @@
-# DBMP — Database Migration Platform
-
-## Stress Testing (`k6`)
 
 ### Overview & Architecture
 
@@ -46,7 +43,7 @@ Configured in `k6/stress.js`:
    docker compose up -d --build
    docker compose run --rm --entrypoint /seed app
    ```
-2. Run the stress test:
+2. Run the test:
    ```sh
    ./scripts/k6.sh
    ```

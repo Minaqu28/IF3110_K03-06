@@ -97,7 +97,6 @@ func run() error {
 		return err
 	}
 
-	// 1. Sample data in the target server (shop = existing "target" db, plus analytics).
 	targetURL := func(dbName string) string {
 		return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
 			url.QueryEscape(targetUser), url.QueryEscape(targetPassword), connectHost, port, url.PathEscape(dbName))
@@ -112,7 +111,6 @@ func run() error {
 		return fmt.Errorf("seed analytics: %w", err)
 	}
 
-	// 2. Users.
 	hash, err := authentication.HashPassword(userPassword)
 	if err != nil {
 		return err
@@ -136,7 +134,6 @@ func run() error {
 		userIDs[u.name] = created.ID
 	}
 
-	// 3. Groups and memberships.
 	existingGroups, err := store.ListGroups(ctx)
 	if err != nil {
 		return err
@@ -181,7 +178,6 @@ func run() error {
 		}
 	}
 
-	// 4. Connections (the password is encrypted by the store, as in the admin UI).
 	existingConns, err := store.ListConnections(ctx)
 	if err != nil {
 		return err
@@ -208,7 +204,6 @@ func run() error {
 		connIDs[name] = c.ID
 	}
 
-	// 5. Access grants (upsert).
 	for _, g := range grants {
 		if err := store.GrantAccess(ctx, groupIDs[g.group], connIDs[g.database], g.level); err != nil {
 			return fmt.Errorf("grant %s on %s: %w", g.group, g.database, err)
@@ -231,8 +226,6 @@ func printSummary(password string) {
 	}
 	fmt.Println("\nThe bootstrap admin from .env can also log in.")
 }
-
-// ---------- target database seeding ----------
 
 func ensureDatabase(ctx context.Context, adminURL, name string) error {
 	db, err := database.Open(ctx, adminURL)
