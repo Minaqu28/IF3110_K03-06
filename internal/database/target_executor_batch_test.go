@@ -26,16 +26,27 @@ func (h *targetHarness) seedOrders(t *testing.T, rows int) {
 
 func (h *targetHarness) batchExecution(t *testing.T, version int, up string, batch domain.BatchConfig, scopeMin, scopeMax int64) (domain.MigrationRevision, domain.ExecutionRequest) {
 	t.Helper()
+	return h.reversibleBatchExecution(t, version, up, "", batch, scopeMin, scopeMax)
+}
+
+func (h *targetHarness) reversibleBatchExecution(t *testing.T, version int, up, down string, batch domain.BatchConfig, scopeMin, scopeMax int64) (domain.MigrationRevision, domain.ExecutionRequest) {
+	t.Helper()
 	ctx := context.Background()
-	rev := h.migration(t, version, up, "")
+	rev := h.migration(t, version, up, down)
 	rev.Batch = &batch
-	rev.IrreversibleReason = "test"
+	var downSQL, reason any
+	if down != "" {
+		downSQL = down
+	} else {
+		reason, rev.IrreversibleReason = "test", "test"
+	}
 	if err := h.platform.QueryRowContext(ctx, `
 		INSERT INTO migration_revisions
-		    (migration_id, database_id, revision, up_sql, irreversible_reason, status, definition_hash, created_by, locked_at,
-		     batch_table, batch_cursor_column, batch_size)
-		VALUES ($1, $2, 1, $3, 'test', 'APPROVED', $4, $5, now(), $6, $7, $8) RETURNING id`,
-		rev.MigrationID, h.databaseID, up, selectOneHash, h.userID, batch.Table, batch.CursorColumn, batch.BatchSize).Scan(&rev.ID); err != nil {
+		    (migration_id, database_id, revision, up_sql, down_sql, reversible, irreversible_reason, status, definition_hash,
+		     created_by, locked_at, batch_table, batch_cursor_column, batch_size)
+		VALUES ($1, $2, 1, $3, $4, $5, $6, 'APPROVED', $7, $8, now(), $9, $10, $11) RETURNING id`,
+		rev.MigrationID, h.databaseID, up, downSQL, down != "", reason, selectOneHash, h.userID,
+		batch.Table, batch.CursorColumn, batch.BatchSize).Scan(&rev.ID); err != nil {
 		t.Fatal(err)
 	}
 	var review int64
@@ -174,8 +185,12 @@ func TestTargetExecutorBatchEdgeCasesPostgres(t *testing.T) {
 	rollback := unboundReq
 	target := req.ExecutionID
 	rollback.Action, rollback.TargetExecutionID = domain.MigrationActionRollback, &target
+	if r := h.run(t, rollback, unbound); r.Status != domain.ExecutionStatusFailed || r.ErrorCode != database.ErrorCodeIrreversible {
+		t.Fatalf("batch rollback of an irreversible revision = %+v", r)
+	}
+	rollback.TargetExecutionID = nil
 	if _, err := h.executor.Execute(ctx, rollback, unbound); !errors.Is(err, admin.ErrInvalidInput) {
-		t.Fatalf("batch rollback before 5.14: err = %v, want invalid input", err)
+		t.Fatalf("batch rollback without a target: err = %v, want invalid input", err)
 	}
 	normal := unboundReq
 	normal.Mode = domain.ExecutionModeNormal

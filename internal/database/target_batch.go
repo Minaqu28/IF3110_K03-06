@@ -65,14 +65,21 @@ func (e *TargetExecutor) runBatch(ctx context.Context, conn *pgx.Conn, b batchSp
 		b.sourceID, b.batchNo, string(b.direction), b.executionID, b.from, hi.Int64, tag.RowsAffected()); err != nil {
 		return batchOutcome{}, err
 	}
+	if err := e.commitBatch(ctx, conn, tx); err != nil {
+		return batchOutcome{}, err
+	}
+	return batchOutcome{to: hi.Int64, rows: tag.RowsAffected()}, nil
+}
+
+func (e *TargetExecutor) commitBatch(ctx context.Context, conn *pgx.Conn, tx pgx.Tx) error {
 	if e.beforeCommit != nil {
 		e.beforeCommit(conn.PgConn().PID())
 	}
 	if err := tx.Commit(ctx); err != nil {
 		if pgErr, ok := commitRejected(err); ok {
-			return batchOutcome{}, pgErr
+			return pgErr
 		}
-		return batchOutcome{}, fmt.Errorf("%w: %w", migrationengine.ErrCommitUncertain, err)
+		return fmt.Errorf("%w: %w", migrationengine.ErrCommitUncertain, err)
 	}
-	return batchOutcome{to: hi.Int64, rows: tag.RowsAffected()}, nil
+	return nil
 }
