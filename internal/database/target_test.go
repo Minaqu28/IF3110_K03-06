@@ -48,6 +48,42 @@ func openTestTarget(t *testing.T, readOnly bool) *pgTarget {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return connectTestTarget(t, config, readOnly)
+}
+
+func openIsolatedTargets(t *testing.T, count int) []*pgTarget {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("TEST_POSTGRES_DSN not set")
+	}
+	ctx := context.Background()
+	root, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := fmt.Sprintf("dbmp_target_%d", time.Now().UnixNano())
+	ident := pgx.Identifier{name}.Sanitize()
+	if _, err := root.Exec(ctx, `CREATE DATABASE `+ident); err != nil {
+		root.Close(ctx)
+		t.Fatalf("create isolated target database: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = root.Exec(context.Background(), `DROP DATABASE `+ident+` WITH (FORCE)`)
+		_ = root.Close(context.Background())
+	})
+	config, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Database = name
+	targets := make([]*pgTarget, count)
+	for i := range targets {
+		targets[i] = connectTestTarget(t, config.Copy(), false)
+	}
+	return targets
+}
+
+func connectTestTarget(t *testing.T, config *pgx.ConnConfig, readOnly bool) *pgTarget {
 	if readOnly {
 		config.RuntimeParams["default_transaction_read_only"] = "on"
 	}
@@ -173,8 +209,8 @@ func TestTargetIntegration(t *testing.T) {
 
 func TestVersionedMigrationIntegration(t *testing.T) {
 	ctx := context.Background()
-	firstTarget := openTestTarget(t, false)
-	secondTarget := openTestTarget(t, false)
+	targets := openIsolatedTargets(t, 2)
+	firstTarget, secondTarget := targets[0], targets[1]
 	suffix := time.Now().UnixNano()
 	firstTable := pgx.Identifier{fmt.Sprintf("migration_first_%d", suffix)}.Sanitize()
 	secondTable := pgx.Identifier{fmt.Sprintf("migration_second_%d", suffix)}.Sanitize()

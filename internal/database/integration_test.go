@@ -82,15 +82,22 @@ func isolatedDB(t *testing.T, migrate bool) *sql.DB {
 	return db
 }
 
-func TestSinglePlatformInitMigrationPostgres(t *testing.T) {
+func TestPlatformMigrationsPostgres(t *testing.T) {
 	db := isolatedDB(t, false)
 	ctx := context.Background()
 	files, err := fs.Glob(migration.Files, "*.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1 || files[0] != "001_init.sql" {
-		t.Fatalf("platform migration files = %v, want only 001_init.sql", files)
+	if len(files) == 0 || files[0] != "001_init.sql" {
+		t.Fatalf("platform migration files = %v, want 001_init.sql first", files)
+	}
+	seen := map[string]bool{}
+	for _, name := range files {
+		if len(name) < 5 || name[3] != '_' || strings.Trim(name[:3], "0123456789") != "" || seen[name[:3]] {
+			t.Fatalf("migration file %q needs a unique NNN_ prefix", name)
+		}
+		seen[name[:3]] = true
 	}
 	if err := database.Migrate(ctx, db, migration.Files); err != nil {
 		t.Fatal(err)
@@ -466,7 +473,7 @@ func TestAdminAuthorizationAndHTTPPostgres(t *testing.T) {
 		t.Fatalf("nonadmin admin status: %d", got)
 	}
 	adminView := request(http.MethodGet, "/admin", adminID, nil)
-	if adminView.Code != http.StatusOK || !strings.Contains(adminView.Body.String(), "Administrasi Platform") || strings.Contains(adminView.Body.String(), "target-secret") {
+	if adminView.Code != http.StatusOK || !strings.Contains(adminView.Body.String(), "<h1>Platform Admin</h1>") || strings.Contains(adminView.Body.String(), "target-secret") {
 		t.Fatalf("admin page render or credential exposure: status=%d", adminView.Code)
 	}
 	if got := request(http.MethodPost, "/admin/groups", viewerID, url.Values{"name": {"bad"}}).Code; got != http.StatusForbidden {
