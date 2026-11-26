@@ -286,3 +286,96 @@ func TestCanSubmitBatchMode(t *testing.T) {
 		t.Fatalf("batch apply: %v", err)
 	}
 }
+
+func TestCanRun(t *testing.T) {
+	apply, rollback := domain.MigrationActionApply, domain.MigrationActionRollback
+	pending, running, partial := domain.ExecutionStatusPending, domain.ExecutionStatusRunning, domain.ExecutionStatusPartial
+	unknown, succeeded, failed := domain.ExecutionStatusUnknown, domain.ExecutionStatusSucceeded, domain.ExecutionStatusFailed
+	run := func(action domain.MigrationAction, target, id string) func() domain.ExecutionRequest {
+		return func() domain.ExecutionRequest { r := request(action, target); r.ExecutionID = id; return r }
+	}
+	cases := []struct {
+		name  string
+		state func(*SubmitState)
+		req   func() domain.ExecutionRequest
+		want  error
+	}{
+		{name: "first run of a queued apply",
+			state: func(s *SubmitState) { s.Executions = []ExecutionSummary{exec("x", 0, apply, pending)} },
+			req:   run(apply, "", "x")},
+		{name: "first run after an earlier failure",
+			state: func(s *SubmitState) {
+				s.Executions = []ExecutionSummary{exec("a", 0, apply, failed), exec("x", 1, apply, pending)}
+			},
+			req: run(apply, "", "x")},
+		{name: "first run when a newer revision appeared", want: ErrNotLatestRevision,
+			state: func(s *SubmitState) {
+				s.LatestRevision = 3
+				s.Executions = []ExecutionSummary{exec("x", 0, apply, pending)}
+			},
+			req: run(apply, "", "x")},
+		{name: "first run while another migration is running", want: ErrDatabaseHeld,
+			state: func(s *SubmitState) {
+				s.Executions = []ExecutionSummary{exec("x", 0, apply, pending), otherMigration("b", 6, 1, apply, running)}
+			},
+			req: run(apply, "", "x")},
+		{name: "first run after the approval went stale", want: ErrNotApproved,
+			state: func(s *SubmitState) {
+				s.Review.Status = domain.ReviewStatusStale
+				s.Executions = []ExecutionSummary{exec("x", 0, apply, pending)}
+			},
+			req: run(apply, "", "x")},
+		{name: "first run of a rollback whose target is partial",
+			state: func(s *SubmitState) {
+				s.Executions = []ExecutionSummary{exec("a", 0, apply, partial), rollbackOf("x", "a", 1, pending)}
+			},
+			req: run(rollback, "a", "x")},
+		{name: "retry of a running execution keeps its revision",
+			state: func(s *SubmitState) {
+				s.LatestRevision = 3
+				s.Executions = []ExecutionSummary{exec("x", 0, apply, running)}
+			},
+			req: run(apply, "", "x")},
+		{name: "resume of a partial execution",
+			state: func(s *SubmitState) { s.Executions = []ExecutionSummary{exec("x", 0, apply, partial)} },
+			req:   run(apply, "", "x")},
+		{name: "reconcile an uncertain execution",
+			state: func(s *SubmitState) { s.Executions = []ExecutionSummary{exec("x", 0, apply, unknown)} },
+			req:   run(apply, "", "x")},
+		{name: "retry of a running rollback whose target is partial",
+			state: func(s *SubmitState) {
+				s.Executions = []ExecutionSummary{exec("a", 0, apply, partial), rollbackOf("x", "a", 1, running)}
+			},
+			req: run(rollback, "a", "x")},
+		{name: "resume while another migration is partial", want: ErrDatabaseHeld,
+			state: func(s *SubmitState) {
+				s.Executions = []ExecutionSummary{exec("x", 0, apply, partial), otherMigration("b", 6, 1, apply, partial)}
+			},
+			req: run(apply, "", "x")},
+		{name: "an execution that already succeeded", want: ErrActionNotAllowed,
+			state: func(s *SubmitState) { s.Executions = []ExecutionSummary{exec("x", 0, apply, succeeded)} },
+			req:   run(apply, "", "x")},
+		{name: "an execution that already failed", want: ErrActionNotAllowed,
+			state: func(s *SubmitState) { s.Executions = []ExecutionSummary{exec("x", 0, apply, failed)} },
+			req:   run(apply, "", "x")},
+		{name: "an unknown execution", want: ErrActionNotAllowed,
+			req: run(apply, "", "missing")},
+		{name: "the message disagrees with the stored execution", want: ErrActionNotAllowed,
+			state: func(s *SubmitState) { s.Executions = []ExecutionSummary{exec("x", 0, apply, pending)} },
+			req:   run(domain.MigrationActionForward, "", "x")},
+		{name: "no execution id", want: admin.ErrInvalidInput,
+			req: run(apply, "", "")},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			state := baseState()
+			if c.state != nil {
+				c.state(&state)
+			}
+			err := CanRun(state, c.req())
+			if !errors.Is(err, c.want) || (c.want == nil && err != nil) {
+				t.Fatalf("CanRun = %v, want %v", err, c.want)
+			}
+		})
+	}
+}
