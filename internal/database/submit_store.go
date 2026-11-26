@@ -86,7 +86,7 @@ func jobMessage(jobID string, e domain.ExecutionRequest) domain.MigrationJobMess
 	}
 }
 
-func loadSubmitState(ctx context.Context, tx *sql.Tx, req domain.ExecutionRequest) (workflow.SubmitState, error) {
+func loadSubmitState(ctx context.Context, tx dbtx, req domain.ExecutionRequest) (workflow.SubmitState, error) {
 	var state workflow.SubmitState
 	rev, err := scanRevision(tx.QueryRowContext(ctx, `
 		SELECT `+revisionColumns+` FROM migration_revisions

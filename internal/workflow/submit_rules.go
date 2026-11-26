@@ -190,3 +190,42 @@ func targetOf(req domain.ExecutionRequest) string {
 	}
 	return *req.TargetExecutionID
 }
+
+func CanRun(state SubmitState, req domain.ExecutionRequest) error {
+	if req.ExecutionID == "" {
+		return admin.ErrInvalidInput
+	}
+	if err := checkRequestShape(state.Revision, req); err != nil {
+		return err
+	}
+	if !approvedFor(state, req) {
+		return ErrNotApproved
+	}
+	var self *ExecutionSummary
+	var others []ExecutionSummary
+	for i, e := range state.Executions {
+		if e.ID == req.ExecutionID {
+			self = &state.Executions[i]
+		} else {
+			others = append(others, e)
+		}
+	}
+	if self == nil || self.RevisionID != req.RevisionID || self.Action != req.Action ||
+		self.Mode != req.Mode || self.TargetExecutionID != targetOf(req) {
+		return ErrActionNotAllowed
+	}
+	switch self.Status {
+	case domain.ExecutionStatusPending:
+		fresh := state
+		fresh.Executions = others
+		firstRun := req
+		firstRun.ExecutionID = ""
+		return CanSubmit(fresh, firstRun)
+	case domain.ExecutionStatusRunning, domain.ExecutionStatusPartial, domain.ExecutionStatusUnknown, domain.ExecutionStatusPartiallyReverted:
+		target := targetOf(req)
+		return checkHold(state.Executions, func(e ExecutionSummary) bool {
+			return e.ID == self.ID || (e.ID == target && e.Status == domain.ExecutionStatusPartial)
+		})
+	}
+	return ErrActionNotAllowed
+}

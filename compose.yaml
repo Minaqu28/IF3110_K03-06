@@ -6,10 +6,13 @@ services:
       - .env
     environment:
       DATABASE_URL: "postgres://platform:${PLATFORM_DB_PASSWORD:?Set PLATFORM_DB_PASSWORD in .env}@platform-db:5432/platform?sslmode=disable"
+      AMQP_URL: "amqp://platform:${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}@rabbitmq:5672/"
     ports:
       - "${APP_HOST_PORT:-8080}:8080"
     depends_on:
       platform-db:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
 
   platform-db:
@@ -40,6 +43,20 @@ services:
       timeout: 3s
       retries: 10
 
+  rabbitmq:
+    image: rabbitmq:4-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: platform
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
 volumes:
   platform-db-data:
   target-db-data:
+  rabbitmq-data:
