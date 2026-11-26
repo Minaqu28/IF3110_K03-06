@@ -40,19 +40,20 @@ func (h *targetHarness) reversibleBatchExecution(t *testing.T, version int, up, 
 	} else {
 		reason, rev.IrreversibleReason = "test", "test"
 	}
+	rev.DefinitionHash = domain.ComputeDefinitionHash(rev)
 	if err := h.platform.QueryRowContext(ctx, `
 		INSERT INTO migration_revisions
 		    (migration_id, database_id, revision, up_sql, down_sql, reversible, irreversible_reason, status, definition_hash,
 		     created_by, locked_at, batch_table, batch_cursor_column, batch_size)
 		VALUES ($1, $2, 1, $3, $4, $5, $6, 'APPROVED', $7, $8, now(), $9, $10, $11) RETURNING id`,
-		rev.MigrationID, h.databaseID, up, downSQL, down != "", reason, selectOneHash, h.userID,
+		rev.MigrationID, h.databaseID, up, downSQL, down != "", reason, rev.DefinitionHash, h.userID,
 		batch.Table, batch.CursorColumn, batch.BatchSize).Scan(&rev.ID); err != nil {
 		t.Fatal(err)
 	}
 	var review int64
 	if err := h.platform.QueryRowContext(ctx, `
 		INSERT INTO review_requests (revision_id, definition_hash, status, requested_by, resolved_at)
-		VALUES ($1, $2, 'APPROVED', $3, now()) RETURNING id`, rev.ID, selectOneHash, h.userID).Scan(&review); err != nil {
+		VALUES ($1, $2, 'APPROVED', $3, now()) RETURNING id`, rev.ID, rev.DefinitionHash, h.userID).Scan(&review); err != nil {
 		t.Fatal(err)
 	}
 	req := h.request(rev, domain.MigrationActionApply, "", "")

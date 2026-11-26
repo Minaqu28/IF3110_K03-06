@@ -146,8 +146,9 @@ func TestJobStoreSavePostgres(t *testing.T) {
 	if err := store.SaveJob(ctx, domain.Job{ID: jobA, Status: domain.JobStatusSucceeded, AttemptCount: 2}); err != nil {
 		t.Fatal(err)
 	}
+	want.status = "SUCCEEDED"
 	if m := readExecutionMirror(t, db, execution); m != want {
-		t.Fatalf("terminal job changed the execution status: %+v, want %+v", m, want)
+		t.Fatalf("execution after the job succeeded = %+v, want %+v", m, want)
 	}
 	if err := store.SaveJob(ctx, domain.Job{ID: jobA, Status: domain.JobStatusRunning, AttemptCount: 3}); !errors.Is(err, admin.ErrConflict) {
 		t.Fatalf("saving a terminal job: err = %v, want conflict", err)
@@ -156,16 +157,12 @@ func TestJobStoreSavePostgres(t *testing.T) {
 		t.Fatalf("unknown job: err = %v, want not found", err)
 	}
 
-	if _, err := db.ExecContext(ctx, `UPDATE migration_executions SET status = 'SUCCEEDED' WHERE id = $1`, execution); err != nil {
-		t.Fatal(err)
-	}
 	if err := store.CreateJob(ctx, domain.Job{ID: jobB, ExecutionID: execution, DatabaseID: f.databaseID}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SaveJob(ctx, domain.Job{ID: jobB, Status: domain.JobStatusRunning, Progress: &domain.BatchProgress{Completed: 99}}); err != nil {
 		t.Fatal(err)
 	}
-	want.status = "SUCCEEDED"
 	if m := readExecutionMirror(t, db, execution); m != want {
 		t.Fatalf("finished execution was overwritten: %+v, want %+v", m, want)
 	}
