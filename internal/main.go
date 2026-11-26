@@ -82,6 +82,11 @@ func run() error {
 	}
 	adminHandler := httpserver.NewAdminHandler(adminService, authHandler, pages)
 	databaseHandler := httpserver.NewDatabaseHandler(explorer.NewService(adminService, adminStore), authHandler, pages)
+	jobRoutes, closeJobs, err := webJobRoutes(db, authHandler, adminStore, adminService)
+	if err != nil {
+		return err
+	}
+	defer closeJobs()
 
 	addr := os.Getenv("HTTP_ADDR")
 	if addr == "" {
@@ -89,7 +94,7 @@ func run() error {
 	}
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpserver.NewApplicationRouter(authHandler, adminHandler, databaseHandler, static, db.PingContext),
+		Handler:           httpserver.NewApplicationRouter(authHandler, adminHandler, databaseHandler, static, db.PingContext, jobRoutes),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,

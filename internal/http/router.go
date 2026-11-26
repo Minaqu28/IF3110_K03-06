@@ -24,7 +24,7 @@ func NewAuthenticatedRouter(authenticationHandler *AuthenticationHandler, static
 	return NewApplicationRouter(authenticationHandler, nil, nil, static, health)
 }
 
-func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, static fs.FS, health func(context.Context) error) http.Handler {
+func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, static fs.FS, health func(context.Context) error, routes ...func(*http.ServeMux)) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler(health))
 	mux.HandleFunc("GET /{$}", authenticationHandler.Home)
@@ -57,6 +57,9 @@ func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHan
 		mux.HandleFunc("POST /databases/{id}/migrations", databaseHandler.CreateMigration)
 		mux.HandleFunc("POST /databases/{id}/migrations/{version}/update", databaseHandler.UpdateMigration)
 		mux.HandleFunc("POST /databases/{id}/migrations/{version}/execute", databaseHandler.ExecuteMigration)
+	}
+	for _, register := range routes {
+		register(mux)
 	}
 	if static != nil {
 		mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
