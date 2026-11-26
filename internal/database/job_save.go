@@ -13,6 +13,10 @@ import (
 var _ worker.JobStateStore = (*JobPostgresStore)(nil)
 
 func (s *JobPostgresStore) SaveJob(ctx context.Context, job domain.Job) error {
+	return s.saveJob(ctx, job, nil)
+}
+
+func (s *JobPostgresStore) saveJob(ctx context.Context, job domain.Job, guard func(context.Context, *sql.Tx) error) error {
 	progress, err := progressJSON(job.Progress)
 	if err != nil {
 		return err
@@ -22,11 +26,17 @@ func (s *JobPostgresStore) SaveJob(ctx context.Context, job domain.Job) error {
 		return err
 	}
 	defer tx.Rollback()
+	if guard != nil {
+		if err := guard(ctx, tx); err != nil {
+			return err
+		}
+	}
 	var executionID string
 	err = tx.QueryRowContext(ctx, `
 		UPDATE migration_jobs
 		SET status = $2, attempt_count = $3, progress = $4::jsonb,
-		    error_code = $5, error_message = $6, updated_at = now()
+		    error_code = $5, error_message = $6, updated_at = now(),
+		    published_at = CASE WHEN $2 IN ('RETRY_WAIT', 'NEEDS_RECONCILIATION') THEN NULL ELSE published_at END
 		WHERE id = $1 AND status NOT IN ('SUCCEEDED', 'FAILED', 'CANCELLED')
 		RETURNING execution_id`,
 		job.ID, string(job.Status), job.AttemptCount, progress,
