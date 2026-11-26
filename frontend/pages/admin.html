@@ -82,12 +82,14 @@
         </form>
 
         <table>
-            <thead><tr><th class="col-id">ID</th><th>Nama group</th><th class="col-actions">Aksi</th></tr></thead>
+            <thead><tr><th class="col-id">ID</th><th>Nama group</th><th>Leader</th><th class="col-actions">Aksi</th></tr></thead>
             <tbody>
+            {{$users := .Users}}
             {{range .Groups}}
             <tr>
                 <td>{{.ID}}</td>
                 <td>{{.Name}}</td>
+                <td>{{if .LeaderUsername}}{{.LeaderUsername}}{{else}}-{{end}}</td>
                 <td>
                     <div class="actions">
                         <form method="post" action="/admin/groups/rename" class="inline-form">
@@ -95,6 +97,20 @@
                             <input type="hidden" name="group_id" value="{{.ID}}">
                             <input name="name" value="{{.Name}}" aria-label="Nama group" required>
                             <button type="submit">Ubah nama</button>
+                        </form>
+                        <form method="post" action="/admin/groups/leader" class="inline-form">
+                            <input type="hidden" name="csrf_token" value="{{$csrf}}">
+                            <input type="hidden" name="group_id" value="{{.ID}}">
+                            <select name="leader_id" aria-label="Leader group {{.Name}}">
+                                <option value="">Tanpa leader</option>
+                                {{$group := .}}
+                                {{range $users}}
+                                {{if .IsActive}}
+                                <option value="{{.ID}}" {{if $group.HasLeader .ID}}selected{{end}}>{{.Username}}</option>
+                                {{end}}
+                                {{end}}
+                            </select>
+                            <button type="submit">Simpan leader</button>
                         </form>
                         <form method="post" action="/admin/groups/delete">
                             <input type="hidden" name="csrf_token" value="{{$csrf}}">

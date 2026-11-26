@@ -5,7 +5,7 @@ import (
 	"errors"
 	"html/template"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,11 +19,14 @@ import (
 	"github.com/Minaqu28/IF3110_K03-06/internal/explorer"
 	"github.com/Minaqu28/IF3110_K03-06/internal/http"
 	"github.com/Minaqu28/IF3110_K03-06/internal/migration"
+	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
 )
 
 func main() {
+	slog.SetDefault(observability.NewLogger(os.Stdout, slog.LevelInfo))
 	if err := run(); err != nil {
-		log.Fatal(err)
+		slog.Error("server exited with error", slog.String("event", "server.fatal"), slog.String("status", "error"), slog.String("error", err.Error()))
+		os.Exit(1)
 	}
 }
 
@@ -42,6 +45,15 @@ func run() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	shutdownTracing, err := observability.InitTracing(ctx, "dbmp-platform", os.Getenv("OTEL_TRACES_EXPORTER"), os.Stdout)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutCancel()
+		_ = shutdownTracing(shutCtx)
+	}()
 	db, err := database.Open(ctx, dsn)
 	if err != nil {
 		return err
@@ -89,7 +101,7 @@ func run() error {
 		_ = server.Shutdown(ctx)
 	}()
 
-	log.Printf("listening on %s", addr)
+	slog.Info("server listening", slog.String("event", "server.start"), slog.String("addr", addr), slog.String("status", "ok"))
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

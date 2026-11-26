@@ -10,6 +10,7 @@ import (
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/authentication"
 	"github.com/Minaqu28/IF3110_K03-06/internal/explorer"
+	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
 )
 
 const databaseRequestTimeout = 12 * time.Second
@@ -41,7 +42,10 @@ func (h *DatabaseHandler) Show(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid database ID", http.StatusBadRequest)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), databaseRequestTimeout)
+	ctx, cancel := context.WithTimeout(
+		observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""),
+		databaseRequestTimeout,
+	)
 	defer cancel()
 
 	if migRaw := r.URL.Query().Get("migration"); migRaw != "" {
@@ -107,6 +111,7 @@ func (h *DatabaseHandler) requireMutationForm(w http.ResponseWriter, r *http.Req
 		http.Error(w, "invalid database ID", http.StatusBadRequest)
 		return authentication.Session{}, 0, false
 	}
+	*r = *r.WithContext(observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""))
 	return session, id, true
 }
 
@@ -149,7 +154,10 @@ func (h *DatabaseHandler) Explain(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), databaseRequestTimeout)
+	ctx, cancel := context.WithTimeout(
+		observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""),
+		databaseRequestTimeout,
+	)
 	defer cancel()
 	view, err := h.service.Explain(ctx, session.User, id, r.PostForm.Get("plan_sql"), r.PostForm.Get("mode"))
 	h.renderViewOrError(w, session, view, err)
@@ -161,7 +169,10 @@ func (h *DatabaseHandler) Execute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), databaseRequestTimeout)
+	ctx, cancel := context.WithTimeout(
+		observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""),
+		databaseRequestTimeout,
+	)
 	defer cancel()
 	view, err := h.service.Execute(ctx, session.User, id, r.PostForm.Get("sql"))
 	h.renderViewOrError(w, session, view, err)
@@ -182,7 +193,10 @@ func (h *DatabaseHandler) PreviewMigration(w http.ResponseWriter, r *http.Reques
 		}
 		version = v
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), databaseRequestTimeout)
+	ctx, cancel := context.WithTimeout(
+		observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""),
+		databaseRequestTimeout,
+	)
 	defer cancel()
 	view, err := h.service.PreviewMigration(ctx, session.User, id, version, r.PostForm.Get("title"), r.PostForm.Get("migration_sql"))
 	h.renderViewOrError(w, session, view, err)
@@ -194,7 +208,10 @@ func (h *DatabaseHandler) CreateMigration(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), databaseRequestTimeout)
+	ctx, cancel := context.WithTimeout(
+		observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""),
+		databaseRequestTimeout,
+	)
 	defer cancel()
 	view, err := h.service.CreateMigration(ctx, session.User, id, r.PostForm.Get("title"), r.PostForm.Get("migration_sql"))
 	if h.redirectMigration(w, r, view, err) {
@@ -214,7 +231,10 @@ func (h *DatabaseHandler) UpdateMigration(w http.ResponseWriter, r *http.Request
 		http.Error(w, "invalid migration version", http.StatusBadRequest)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), databaseRequestTimeout)
+	ctx, cancel := context.WithTimeout(
+		observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""),
+		databaseRequestTimeout,
+	)
 	defer cancel()
 	view, err := h.service.UpdateMigration(ctx, session.User, id, version, r.PostForm.Get("title"), r.PostForm.Get("migration_sql"))
 	if h.redirectMigration(w, r, view, err) {
@@ -234,7 +254,10 @@ func (h *DatabaseHandler) ExecuteMigration(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "invalid migration version", http.StatusBadRequest)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), databaseRequestTimeout)
+	ctx, cancel := context.WithTimeout(
+		observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""),
+		databaseRequestTimeout,
+	)
 	defer cancel()
 	view, err := h.service.ExecuteMigration(ctx, session.User, id, version)
 	if h.redirectMigration(w, r, view, err) {

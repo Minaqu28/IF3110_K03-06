@@ -183,16 +183,27 @@ func (s *AdminPostgresStore) CreateGroup(ctx context.Context, name string) (doma
 }
 
 func (s *AdminPostgresStore) ListGroups(ctx context.Context) ([]domain.Group, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name FROM groups ORDER BY id`)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT g.id, g.name, g.leader_id, COALESCE(u.username, '')
+		FROM groups g
+		LEFT JOIN users u ON u.id = g.leader_id
+		ORDER BY g.id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var groups []domain.Group
 	for rows.Next() {
-		var g domain.Group
-		if err := rows.Scan(&g.ID, &g.Name); err != nil {
+		var (
+			g        domain.Group
+			leaderID sql.NullInt64
+		)
+		if err := rows.Scan(&g.ID, &g.Name, &leaderID, &g.LeaderUsername); err != nil {
 			return nil, err
+		}
+		if leaderID.Valid {
+			id := leaderID.Int64
+			g.LeaderID = &id
 		}
 		groups = append(groups, g)
 	}
@@ -201,6 +212,22 @@ func (s *AdminPostgresStore) ListGroups(ctx context.Context) ([]domain.Group, er
 
 func (s *AdminPostgresStore) RenameGroup(ctx context.Context, groupID int64, name string) error {
 	result, err := s.db.ExecContext(ctx, `UPDATE groups SET name = $2 WHERE id = $1`, groupID, name)
+	return rowsAffected(result, err)
+}
+
+func (s *AdminPostgresStore) SetGroupLeader(ctx context.Context, groupID int64, leaderID *int64) error {
+	var leader any
+	if leaderID != nil {
+		var active bool
+		if err := s.db.QueryRowContext(ctx, `SELECT is_active FROM users WHERE id = $1`, *leaderID).Scan(&active); err != nil {
+			return adminError(err)
+		}
+		if !active {
+			return admin.ErrInvalidInput
+		}
+		leader = *leaderID
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE groups SET leader_id = $2 WHERE id = $1`, groupID, leader)
 	return rowsAffected(result, err)
 }
 

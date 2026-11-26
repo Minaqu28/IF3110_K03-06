@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"reflect"
 	"sort"
 	"testing"
 	"time"
@@ -119,7 +120,7 @@ func TestJobOutboxPostgres(t *testing.T) {
 		MigrationID: f.migrationID, RevisionID: msg.RevisionID, ApprovalRequestID: msg.ApprovalRequestID, ActorID: f.userID,
 		Action: domain.MigrationActionApply, Mode: domain.ExecutionModeNormal, RequestedAt: requestedAt,
 	}
-	if msg != want || msg.RevisionID == 0 || msg.ApprovalRequestID == 0 {
+	if !reflect.DeepEqual(msg, want) || msg.RevisionID == 0 || msg.ApprovalRequestID == 0 {
 		t.Fatalf("message = %+v, want %+v", msg, want)
 	}
 	if n, err := jobs.PublishDue(ctx, 10, collect); err != nil || n != 0 {

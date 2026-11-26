@@ -27,6 +27,7 @@ type AdminStore interface {
 	CreateGroup(ctx context.Context, name string) (domain.Group, error)
 	ListGroups(ctx context.Context) ([]domain.Group, error)
 	RenameGroup(ctx context.Context, groupID int64, name string) error
+	SetGroupLeader(ctx context.Context, groupID int64, leaderID *int64) error
 	DeleteGroup(ctx context.Context, groupID int64) error
 	AddMember(ctx context.Context, groupID, userID int64) error
 	RemoveMember(ctx context.Context, groupID, userID int64) error

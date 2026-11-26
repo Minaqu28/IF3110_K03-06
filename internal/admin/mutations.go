@@ -61,6 +61,19 @@ func (s *AdminService) RenameGroup(ctx context.Context, actor domain.User, group
 	return s.store.RenameGroup(ctx, groupID, name)
 }
 
+func (s *AdminService) SetGroupLeader(ctx context.Context, actor domain.User, groupID int64, leaderID *int64) error {
+	if !authorization.CanManagePlatform(actor) {
+		return ErrForbidden
+	}
+	if groupID <= 0 {
+		return ErrInvalidInput
+	}
+	if leaderID != nil && *leaderID <= 0 {
+		return ErrInvalidInput
+	}
+	return s.store.SetGroupLeader(ctx, groupID, leaderID)
+}
+
 func (s *AdminService) DeleteGroup(ctx context.Context, actor domain.User, groupID int64) error {
 	if !authorization.CanManagePlatform(actor) {
 		return ErrForbidden

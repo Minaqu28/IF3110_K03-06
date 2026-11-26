@@ -16,7 +16,7 @@ func NewRouter(pages *template.Template, static fs.FS) http.Handler {
 	mux.HandleFunc("GET /{$}", pageHandler.Home)
 	mux.HandleFunc("GET /login", pageHandler.Login)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
-	return securityHeaders(mux)
+	return observabilityMiddleware(securityHeaders(mux))
 }
 
 // NewAuthenticatedRouter wires the authentication handler when a session store is ready.
@@ -41,6 +41,7 @@ func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHan
 		mux.HandleFunc("POST /admin/users/delete", adminHandler.DeleteUser)
 		mux.HandleFunc("POST /admin/groups", adminHandler.CreateGroup)
 		mux.HandleFunc("POST /admin/groups/rename", adminHandler.RenameGroup)
+		mux.HandleFunc("POST /admin/groups/leader", adminHandler.SetGroupLeader)
 		mux.HandleFunc("POST /admin/groups/delete", adminHandler.DeleteGroup)
 		mux.HandleFunc("POST /admin/memberships", adminHandler.Membership)
 		mux.HandleFunc("POST /admin/connections", adminHandler.CreateConnection)
@@ -61,7 +62,7 @@ func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHan
 	if static != nil {
 		mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
 	}
-	return securityHeaders(mux)
+	return observabilityMiddleware(securityHeaders(mux))
 }
 
 func healthHandler(health func(context.Context) error) http.HandlerFunc {

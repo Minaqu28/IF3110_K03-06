@@ -8,10 +8,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/authentication"
+	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
 )
 
 const sessionCookie = "cookie_session"
@@ -82,15 +84,32 @@ func (h *AuthenticationHandler) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid CSRF token", http.StatusForbidden)
 		return
 	}
-	identifier, err := h.service.Login(r.Context(), r.PostForm.Get("username"), r.PostForm.Get("password"))
+	username := r.PostForm.Get("username")
+	identifier, err := h.service.Login(r.Context(), username, r.PostForm.Get("password"))
 	if errors.Is(err, authentication.ErrInvalidCredentials) {
+		slog.WarnContext(r.Context(), "login failed",
+			slog.String("event", "auth.login"),
+			slog.String("actor", username),
+			slog.String("status", "unauthorized"),
+		)
 		h.renderLogin(w, "Username atau password salah.", http.StatusUnauthorized)
 		return
 	}
 	if err != nil {
+		slog.ErrorContext(r.Context(), "login error",
+			slog.String("event", "auth.login"),
+			slog.String("actor", username),
+			slog.String("status", "error"),
+			slog.String("error", err.Error()),
+		)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	slog.InfoContext(r.Context(), "login succeeded",
+		slog.String("event", "auth.login"),
+		slog.String("actor", username),
+		slog.String("status", "ok"),
+	)
 	h.clearCookie(w, loginCSRFCookie, "/login")
 	h.setCookie(w, sessionCookie, identifier, "/", 0)
 	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
@@ -141,10 +160,20 @@ func (h *AuthenticationHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cookie, _ := r.Cookie(sessionCookie)
-	if err := h.service.Logout(r.Context(), cookie.Value); err != nil {
+	ctx := observability.WithActor(r.Context(), session.User.ID, session.User.Username)
+	if err := h.service.Logout(ctx, cookie.Value); err != nil {
+		slog.ErrorContext(ctx, "logout failed",
+			slog.String("event", "auth.logout"),
+			slog.String("status", "error"),
+			slog.String("error", err.Error()),
+		)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	slog.InfoContext(ctx, "logout succeeded",
+		slog.String("event", "auth.logout"),
+		slog.String("status", "ok"),
+	)
 	h.clearCookie(w, sessionCookie, "/")
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }

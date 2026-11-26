@@ -53,6 +53,10 @@ func (f *fakeStore) RenameGroup(context.Context, int64, string) error {
 	f.record("RenameGroup")
 	return nil
 }
+func (f *fakeStore) SetGroupLeader(context.Context, int64, *int64) error {
+	f.record("SetGroupLeader")
+	return nil
+}
 func (f *fakeStore) DeleteGroup(context.Context, int64) error      { f.record("DeleteGroup"); return nil }
 func (f *fakeStore) AddMember(context.Context, int64, int64) error { f.record("AddMember"); return nil }
 func (f *fakeStore) RemoveMember(context.Context, int64, int64) error {

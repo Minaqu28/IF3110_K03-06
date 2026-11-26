@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/Minaqu28/IF3110_K03-06/internal/authentication"
 	"github.com/Minaqu28/IF3110_K03-06/internal/authorization"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
+	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
 )
 
 type AdminHandler struct {
@@ -42,6 +44,7 @@ func (h *AdminHandler) requireAdmin(w http.ResponseWriter, r *http.Request, muta
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return authentication.Session{}, false
 	}
+	*r = *r.WithContext(observability.WithActor(r.Context(), session.User.ID, session.User.Username))
 	if mutation {
 		if session.Previous {
 			http.Error(w, "stale session identifier", http.StatusForbidden)
@@ -188,6 +191,49 @@ func (h *AdminHandler) RenameGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	adminResult(w, r, h.service.RenameGroup(r.Context(), session.User, id, r.PostForm.Get("name")))
+}
+
+func (h *AdminHandler) SetGroupLeader(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.requireAdmin(w, r, true)
+	if !ok {
+		return
+	}
+	groupID, err := positiveID(r.PostForm.Get("group_id"))
+	if err != nil {
+		adminHTTPError(w, err)
+		return
+	}
+	var leaderID *int64
+	rawLeader := strings.TrimSpace(r.PostForm.Get("leader_id"))
+	if rawLeader != "" && rawLeader != "0" {
+		id, err := positiveID(rawLeader)
+		if err != nil {
+			adminHTTPError(w, err)
+			return
+		}
+		leaderID = &id
+	}
+	err = h.service.SetGroupLeader(r.Context(), session.User, groupID, leaderID)
+	if err != nil {
+		slog.WarnContext(r.Context(), "set group leader failed",
+			slog.String("event", "admin.group.set_leader"),
+			slog.Int64("group_id", groupID),
+			slog.String("status", "error"),
+			slog.String("error", err.Error()),
+		)
+	} else {
+		var lid int64
+		if leaderID != nil {
+			lid = *leaderID
+		}
+		slog.InfoContext(r.Context(), "group leader updated",
+			slog.String("event", "admin.group.set_leader"),
+			slog.Int64("group_id", groupID),
+			slog.Int64("leader_id", lid),
+			slog.String("status", "ok"),
+		)
+	}
+	adminResult(w, r, err)
 }
 
 func (h *AdminHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {

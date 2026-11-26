@@ -162,6 +162,17 @@ func run() error {
 			}
 		}
 	}
+	groupLeaders := map[string]string{
+		"developers": "user1",
+		"analysts":   "user2",
+		"auditors":   "root2",
+	}
+	for groupName, leaderName := range groupLeaders {
+		leaderID := userIDs[leaderName]
+		if err := store.SetGroupLeader(ctx, groupIDs[groupName], &leaderID); err != nil {
+			return fmt.Errorf("set leader %s for %s: %w", leaderName, groupName, err)
+		}
+	}
 	for _, u := range users {
 		if u.inactive {
 			if err := store.SetUserActive(ctx, userIDs[u.name], false); err != nil {

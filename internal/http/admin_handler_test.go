@@ -45,6 +45,10 @@ func (s *recordingAdminStore) CreateGroup(_ context.Context, n string) (domain.G
 	s.rec("CreateGroup")
 	return domain.Group{ID: 1, Name: n}, nil
 }
+func (s *recordingAdminStore) SetGroupLeader(context.Context, int64, *int64) error {
+	s.rec("SetGroupLeader")
+	return nil
+}
 func (s *recordingAdminStore) DeleteGroup(context.Context, int64) error {
 	s.rec("DeleteGroup")
 	return nil
@@ -120,8 +124,9 @@ func adminMutations() map[string]url.Values {
 		"/admin/users":        {"username": {"usagi"}, "password": {"unana yaha yaha"}},
 		"/admin/users/status": {"user_id": {"5"}, "active": {"false"}},
 		"/admin/users/delete": {"user_id": {"5"}},
-		"/admin/groups":       {"name": {"devs"}},
-		"/admin/memberships":  {"action": {"add"}, "group_id": {"1"}, "user_id": {"5"}},
+		"/admin/groups":        {"name": {"devs"}},
+		"/admin/groups/leader": {"group_id": {"1"}, "leader_id": {"5"}},
+		"/admin/memberships":   {"action": {"add"}, "group_id": {"1"}, "user_id": {"5"}},
 		"/admin/grants":       {"action": {"grant"}, "group_id": {"1"}, "database_id": {"1"}, "level": {"VIEW_ONLY"}},
 	}
 }
@@ -206,7 +211,8 @@ func TestAdminMutationsRejectGracePeriodIdentifier(t *testing.T) {
 func TestAdminMutationsSucceedForAdminWithCSRF(t *testing.T) {
 	want := map[string]string{
 		"/admin/users": "CreateUser", "/admin/users/status": "SetUserActive", "/admin/users/delete": "DeleteUser",
-		"/admin/groups": "CreateGroup", "/admin/memberships": "AddMember", "/admin/grants": "GrantAccess",
+		"/admin/groups": "CreateGroup", "/admin/groups/leader": "SetGroupLeader",
+		"/admin/memberships": "AddMember", "/admin/grants": "GrantAccess",
 	}
 	for path, form := range adminMutations() {
 		router, store := newAdminRouter(t, sessionFor(rootUser))

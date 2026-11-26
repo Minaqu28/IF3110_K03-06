@@ -4,11 +4,15 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/authorization"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
+	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type BatchScope struct {
@@ -107,13 +111,56 @@ func (s *SubmitService) scopeFor(ctx context.Context, req domain.ExecutionReques
 }
 
 func (s *SubmitService) publish(ctx context.Context, result SubmitResult) {
-	if err := s.publisher.Publish(ctx, result.Message); err != nil {
-		log.Printf("publish migration job %s: %v (the outbox relay will retry)", result.Job.ID, err)
+	ctx, span := observability.Tracer().Start(ctx, "queue.publish",
+		trace.WithSpanKind(trace.SpanKindProducer),
+		trace.WithAttributes(
+			attribute.String("job.id", result.Job.ID),
+			attribute.String("execution.id", result.Message.ExecutionID),
+			attribute.Int64("database.id", result.Message.DatabaseID),
+			attribute.Int64("migration.id", result.Message.MigrationID),
+			attribute.Int64("revision.id", result.Message.RevisionID),
+			attribute.String("migration.action", string(result.Message.Action)),
+			attribute.String("migration.mode", string(result.Message.Mode)),
+		),
+	)
+	defer span.End()
+
+	msg := result.Message
+	msg.TraceContext = observability.InjectTraceContext(ctx)
+
+	if err := s.publisher.Publish(ctx, msg); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		slog.ErrorContext(ctx, "publish migration job failed; outbox relay will retry",
+			slog.String("event", "queue.publish"),
+			slog.String("status", "error"),
+			slog.String("job_id", result.Job.ID),
+			slog.String("execution_id", msg.ExecutionID),
+			slog.Int64("database_id", msg.DatabaseID),
+			slog.String("error", err.Error()),
+		)
 		return
 	}
 	if err := s.marker.MarkPublished(ctx, result.Job.ID); err != nil {
-		log.Printf("mark migration job %s published: %v", result.Job.ID, err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		slog.ErrorContext(ctx, "mark migration job published failed",
+			slog.String("event", "queue.mark_published"),
+			slog.String("status", "error"),
+			slog.String("job_id", result.Job.ID),
+			slog.String("execution_id", msg.ExecutionID),
+			slog.String("error", err.Error()),
+		)
+		return
 	}
+	span.SetStatus(codes.Ok, "")
+	slog.InfoContext(ctx, "migration job published",
+		slog.String("event", "queue.publish"),
+		slog.String("status", "ok"),
+		slog.String("job_id", result.Job.ID),
+		slog.String("execution_id", msg.ExecutionID),
+		slog.Int64("database_id", msg.DatabaseID),
+	)
 }
 
 func newUUID() string {

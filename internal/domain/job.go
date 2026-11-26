@@ -56,16 +56,17 @@ type Job struct {
 }
 
 type MigrationJobMessage struct {
-	SchemaVersion     int             `json:"schema_version"`
-	JobID             string          `json:"job_id"`
-	ExecutionID       string          `json:"execution_id"`
-	DatabaseID        int64           `json:"database_id"`
-	MigrationID       int64           `json:"migration_id"`
-	RevisionID        int64           `json:"revision_id"`
-	ApprovalRequestID int64           `json:"approval_request_id"`
-	ActorID           int64           `json:"actor_id"`
-	Action            MigrationAction `json:"action"`
-	Mode              ExecutionMode   `json:"mode"`
-	TargetExecutionID *string         `json:"target_execution_id,omitempty"`
-	RequestedAt       time.Time       `json:"requested_at"`
+	SchemaVersion     int               `json:"schema_version"`
+	JobID             string            `json:"job_id"`
+	ExecutionID       string            `json:"execution_id"`
+	DatabaseID        int64             `json:"database_id"`
+	MigrationID       int64             `json:"migration_id"`
+	RevisionID        int64             `json:"revision_id"`
+	ApprovalRequestID int64             `json:"approval_request_id"`
+	ActorID           int64             `json:"actor_id"`
+	Action            MigrationAction   `json:"action"`
+	Mode              ExecutionMode     `json:"mode"`
+	TargetExecutionID *string           `json:"target_execution_id,omitempty"`
+	RequestedAt       time.Time         `json:"requested_at"`
+	TraceContext      map[string]string `json:"trace_context,omitempty"`
 }

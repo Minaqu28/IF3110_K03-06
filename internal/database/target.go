@@ -14,6 +14,7 @@ import (
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 	"github.com/Minaqu28/IF3110_K03-06/internal/explorer"
+	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -73,7 +74,7 @@ func (s *AdminPostgresStore) OpenTarget(ctx context.Context, dbID int64, readOnl
 	if err != nil {
 		return nil, describeConnectError(err)
 	}
-	return &pgTarget{conn: conn, readOnly: readOnly}, nil
+	return &pgTarget{conn: conn, readOnly: readOnly, dbID: c.ID, dbName: c.Name}, nil
 }
 
 func describeConnectError(err error) error {
@@ -103,6 +104,18 @@ func describeConnectError(err error) error {
 type pgTarget struct {
 	conn     *pgx.Conn
 	readOnly bool
+	dbID     int64
+	dbName   string
+}
+
+func (t *pgTarget) sqlEvent(query string, readOnly bool, params ...any) observability.SQLEvent {
+	return observability.SQLEvent{
+		DatabaseID:   t.dbID,
+		DatabaseName: t.dbName,
+		Query:        query,
+		Parameters:   params,
+		ReadOnly:     readOnly,
+	}
 }
 
 func (t *pgTarget) Close(ctx context.Context) error { return t.conn.Close(ctx) }
@@ -113,18 +126,25 @@ func (t *pgTarget) Tables(ctx context.Context) ([]explorer.Table, error) {
 
 func (t *pgTarget) Schemas(ctx context.Context) ([]string, error) {
 	t.resetTx(ctx)
-	rows, err := t.conn.Query(ctx, `
+	const query = `
 		SELECT schema_name FROM information_schema.schemata
 		WHERE schema_name <> 'information_schema' AND schema_name NOT LIKE 'pg_%'
-		ORDER BY schema_name`)
+		ORDER BY schema_name`
+	ev := t.sqlEvent(query, true)
+	ctx, span, start := observability.StartSQL(ctx, nil, ev)
+	rows, err := t.conn.Query(ctx, query)
 	if err != nil {
+		observability.EndSQL(ctx, nil, span, start, ev, nil, err)
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (string, error) {
+	schemas, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (string, error) {
 		var schema string
 		err := row.Scan(&schema)
 		return schema, err
 	})
+	rowCount := int64(len(schemas))
+	observability.EndSQL(ctx, nil, span, start, ev, &rowCount, err)
+	return schemas, err
 }
 
 func (t *pgTarget) TablesInSchema(ctx context.Context, schema string) ([]explorer.Table, error) {
@@ -244,7 +264,10 @@ func (t *pgTarget) PreviewPage(ctx context.Context, schema, table string, limit,
 		return explorer.StatementResult{}, err
 	}
 	query := `SELECT * FROM ` + pgx.Identifier{schema, table}.Sanitize() + ` ORDER BY ` + order + ` LIMIT ` + strconv.Itoa(limit+1) + ` OFFSET ` + strconv.Itoa(offset)
-	result := collect(t.conn.PgConn().ExecParams(ctx, query, nil, nil, nil, nil), limit)
+	ev := t.sqlEvent(query, true)
+	ctx, span, start := observability.StartSQL(ctx, nil, ev)
+	result, rowCount, execErr := collectWithMeta(t.conn.PgConn().ExecParams(ctx, query, nil, nil, nil, nil), limit)
+	observability.EndSQL(ctx, nil, span, start, ev, &rowCount, execErr)
 	if result.Error != "" {
 		return result, errors.New(result.Error)
 	}
@@ -293,18 +316,35 @@ func (t *pgTarget) previewOrder(ctx context.Context, schema, table string) (stri
 
 func (t *pgTarget) Run(ctx context.Context, sql string, maxRows int) []explorer.StatementResult {
 	defer t.resetTx(ctx)
+	ev := t.sqlEvent(sql, t.readOnly)
+	ctx, span, start := observability.StartSQL(ctx, nil, ev)
 	pg := t.conn.PgConn()
 	if t.readOnly {
-		return []explorer.StatementResult{collect(pg.ExecParams(ctx, sql, nil, nil, nil, nil), maxRows)}
+		res, rowCount, err := collectWithMeta(pg.ExecParams(ctx, sql, nil, nil, nil, nil), maxRows)
+		observability.EndSQL(ctx, nil, span, start, ev, &rowCount, err)
+		return []explorer.StatementResult{res}
 	}
 	var results []explorer.StatementResult
+	var totalRows int64
+	var firstErr error
 	mrr := pg.Exec(ctx, sql)
 	for mrr.NextResult() {
-		results = append(results, collect(mrr.ResultReader(), maxRows))
+		res, rc, err := collectWithMeta(mrr.ResultReader(), maxRows)
+		totalRows += rc
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		results = append(results, res)
 	}
-	if err := mrr.Close(); err != nil && !hasError(results) {
-		results = append(results, explorer.StatementResult{Error: describeError(err)})
+	if err := mrr.Close(); err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
+		if !hasError(results) {
+			results = append(results, explorer.StatementResult{Error: describeError(err)})
+		}
 	}
+	observability.EndSQL(ctx, nil, span, start, ev, &totalRows, firstErr)
 	return results
 }
 
@@ -316,17 +356,26 @@ func (t *pgTarget) RunInTx(ctx context.Context, statements []string, maxRows int
 	}
 	var results []explorer.StatementResult
 	for _, stmt := range statements {
-		res := collect(tx.Conn().PgConn().ExecParams(ctx, stmt, nil, nil, nil, nil), maxRows)
+		ev := t.sqlEvent(stmt, t.readOnly)
+		stmtCtx, span, start := observability.StartSQL(ctx, nil, ev)
+		res, rc, execErr := collectWithMeta(tx.Conn().PgConn().ExecParams(stmtCtx, stmt, nil, nil, nil, nil), maxRows)
+		observability.EndSQL(stmtCtx, nil, span, start, ev, &rc, execErr)
 		results = append(results, res)
 		if res.Error != "" {
-			_ = tx.Rollback(context.WithoutCancel(ctx))
+			rbErr := tx.Rollback(context.WithoutCancel(ctx))
+			observability.LogTxOutcome(ctx, nil, ev, false, rbErr)
 			return results
 		}
 	}
+	txEv := t.sqlEvent("COMMIT", t.readOnly)
 	if err := tx.Commit(ctx); err != nil {
-		_ = tx.Rollback(context.WithoutCancel(ctx))
+		observability.LogTxOutcome(ctx, nil, txEv, true, err)
+		rbErr := tx.Rollback(context.WithoutCancel(ctx))
+		observability.LogTxOutcome(ctx, nil, t.sqlEvent("ROLLBACK", t.readOnly), false, rbErr)
 		results = append(results, explorer.StatementResult{Error: describeError(err)})
+		return results
 	}
+	observability.LogTxOutcome(ctx, nil, txEv, true, nil)
 	return results
 }
 
@@ -375,28 +424,52 @@ func (t *pgTarget) ApplyVersionedMigration(ctx context.Context, migration explor
 	if next != migration.Version {
 		return nil, false, admin.ErrConflict
 	}
+	migEv := t.sqlEvent(migration.SQL, false)
+	migEv.MigrationID = migration.ID
+	migCtx, span, start := observability.StartSQL(ctx, nil, migEv)
 	var results []explorer.StatementResult
-	mrr := tx.Conn().PgConn().Exec(ctx, migration.SQL)
+	var totalRows int64
+	var firstErr error
+	mrr := tx.Conn().PgConn().Exec(migCtx, migration.SQL)
 	for mrr.NextResult() {
-		results = append(results, collect(mrr.ResultReader(), maxRows))
+		res, rc, err := collectWithMeta(mrr.ResultReader(), maxRows)
+		totalRows += rc
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		results = append(results, res)
 	}
-	if err := mrr.Close(); err != nil && !hasError(results) {
-		results = append(results, explorer.StatementResult{Error: describeError(err)})
+	if err := mrr.Close(); err != nil {
+		if firstErr == nil {
+			firstErr = err
+		}
+		if !hasError(results) {
+			results = append(results, explorer.StatementResult{Error: describeError(err)})
+		}
 	}
+	observability.EndSQL(migCtx, nil, span, start, migEv, &totalRows, firstErr)
 	if hasError(results) {
+		rbErr := tx.Rollback(context.WithoutCancel(migCtx))
+		observability.LogTxOutcome(migCtx, nil, migEv, false, rbErr)
 		return results, false, nil
 	}
 	if tx.Conn().PgConn().TxStatus() != 'T' {
+		rbErr := tx.Rollback(context.WithoutCancel(migCtx))
+		observability.LogTxOutcome(migCtx, nil, migEv, false, rbErr)
 		return append(results, explorer.StatementResult{Error: "SQL migrasi mengakhiri transaksi."}), false, nil
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := tx.Exec(migCtx, `
 		INSERT INTO public._dbmp_migrations (version, migration_id, sql_text, executed_by)
 		VALUES ($1, $2, $3, $4)`, migration.Version, migration.ID, migration.SQL, userID); err != nil {
+		rbErr := tx.Rollback(context.WithoutCancel(migCtx))
+		observability.LogTxOutcome(migCtx, nil, migEv, false, rbErr)
 		return nil, false, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	if err := tx.Commit(migCtx); err != nil {
+		observability.LogTxOutcome(migCtx, nil, migEv, true, err)
 		return nil, false, err
 	}
+	observability.LogTxOutcome(migCtx, nil, migEv, true, nil)
 	return results, false, nil
 }
 
@@ -407,11 +480,18 @@ func (t *pgTarget) resetTx(ctx context.Context) {
 }
 
 func collect(rr *pgconn.ResultReader, maxRows int) explorer.StatementResult {
+	res, _, _ := collectWithMeta(rr, maxRows)
+	return res
+}
+
+func collectWithMeta(rr *pgconn.ResultReader, maxRows int) (explorer.StatementResult, int64, error) {
 	var result explorer.StatementResult
 	for _, field := range rr.FieldDescriptions() {
 		result.Columns = append(result.Columns, field.Name)
 	}
+	var seenRows int64
 	for rr.NextRow() {
+		seenRows++
 		if len(result.Rows) >= maxRows {
 			result.Truncated = true
 			continue
@@ -430,10 +510,14 @@ func collect(rr *pgconn.ResultReader, maxRows int) explorer.StatementResult {
 	tag, err := rr.Close()
 	if err != nil {
 		result.Error = describeError(err)
-		return result
+		return result, seenRows, err
 	}
 	result.Command = tag.String()
-	return result
+	rowCount := tag.RowsAffected()
+	if rowCount == 0 && seenRows > 0 {
+		rowCount = seenRows
+	}
+	return result, rowCount, nil
 }
 
 func hasError(results []explorer.StatementResult) bool {
