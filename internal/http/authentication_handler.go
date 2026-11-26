@@ -197,7 +197,11 @@ func (h *AuthenticationHandler) verifyLoginCSRF(r *http.Request) bool {
 	if err != nil || !sameToken(cookie.Value, r.PostForm.Get("csrf_token")) {
 		return false
 	}
-	parts := strings.Split(cookie.Value, ".")
+	return h.validLoginCSRF(cookie.Value)
+}
+
+func (h *AuthenticationHandler) validLoginCSRF(value string) bool {
+	parts := strings.Split(value, ".")
 	if len(parts) != 2 {
 		return false
 	}

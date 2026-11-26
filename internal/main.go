@@ -36,6 +36,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	spa, err := fs.Sub(frontend.Files, ".")
+	if err != nil {
+		return err
+	}
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		return errors.New("DATABASE_URL is required")
@@ -73,7 +77,7 @@ func run() error {
 	}
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpserver.NewApplicationRouter(authHandler, adminHandler, databaseHandler, static, db.PingContext),
+		Handler:           httpserver.NewApplicationRouterWithSPA(authHandler, adminHandler, databaseHandler, nil, nil, static, spa, db.PingContext),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
