@@ -57,6 +57,7 @@ func TestClassifyError(t *testing.T) {
 		{"bad password on connect", fmt.Errorf("connect: %w", &pgconn.PgError{Code: "28P01"}), ErrorPermanent},
 		{"uncertain commit", fmt.Errorf("%w: %w", ErrCommitUncertain, io.EOF), ErrorUncertain},
 		{"uncertain beats sqlstate", fmt.Errorf("%w: %w", ErrCommitUncertain, &pgconn.PgError{Code: "42601"}), ErrorUncertain},
+		{"target busy", fmt.Errorf("batch run: %w", ErrTargetBusy), ErrorTransient},
 		{"cancelled", context.Canceled, ErrorTransient},
 		{"deadline", fmt.Errorf("run: %w", context.DeadlineExceeded), ErrorTransient},
 		{"eof", io.EOF, ErrorTransient},
