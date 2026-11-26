@@ -74,7 +74,7 @@ func adminError(err error) error {
 			return admin.ErrConflict
 		case "23503":
 			return admin.ErrNotFound
-		case "23502", "23514", "22001":
+		case "23502", "23514", "22001", "22P02":
 			return admin.ErrInvalidInput
 		}
 	}
