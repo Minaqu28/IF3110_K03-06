@@ -6,6 +6,7 @@ import (
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
+	"github.com/Minaqu28/IF3110_K03-06/internal/workflow"
 )
 
 type ExecutionPostgresStore struct {
@@ -17,25 +18,34 @@ func NewExecutionPostgresStore(db *sql.DB) *ExecutionPostgresStore {
 }
 
 func (s *ExecutionPostgresStore) CreateExecution(ctx context.Context, req domain.ExecutionRequest) (domain.ExecutionRequest, error) {
+	return createExecution(ctx, s.db, req, nil)
+}
+
+func createExecution(ctx context.Context, q dbtx, req domain.ExecutionRequest, scope *workflow.BatchScope) (domain.ExecutionRequest, error) {
 	if !req.Action.Valid() || req.Action.RequiresTargetExecution() != (req.TargetExecutionID != nil) {
 		return domain.ExecutionRequest{}, admin.ErrInvalidInput
+	}
+	var scopeMin, scopeMax sql.NullInt64
+	if scope != nil {
+		scopeMin = sql.NullInt64{Int64: scope.Min, Valid: true}
+		scopeMax = sql.NullInt64{Int64: scope.Max, Valid: true}
 	}
 	created := req
 	created.ExecutionID = ""
 	created.JobID = ""
-	err := s.db.QueryRowContext(ctx, `
+	err := q.QueryRowContext(ctx, `
 		INSERT INTO migration_executions (
 		    database_id, migration_id, revision_id, approval_request_id,
-		    action, mode, target_execution_id, requested_by
+		    action, mode, target_execution_id, requested_by, scope_min, scope_max
 		)
-		SELECT r.database_id, r.migration_id, r.id, q.id, $5, $6, $7, $8
+		SELECT r.database_id, r.migration_id, r.id, q.id, $5, $6, $7, $8, $9, $10
 		FROM migration_revisions r
 		JOIN review_requests q ON q.revision_id = r.id
 		WHERE r.database_id = $1 AND r.migration_id = $2 AND r.id = $3 AND q.id = $4
 		RETURNING id, requested_at`,
 		req.DatabaseID, req.MigrationID, req.RevisionID, req.ApprovalRequestID,
 		string(req.Action), string(req.Mode), req.TargetExecutionID,
-		sql.NullInt64{Int64: req.ActorID, Valid: req.ActorID > 0}).
+		sql.NullInt64{Int64: req.ActorID, Valid: req.ActorID > 0}, scopeMin, scopeMax).
 		Scan(&created.ExecutionID, &created.RequestedAt)
 	if err != nil {
 		return domain.ExecutionRequest{}, adminError(err)

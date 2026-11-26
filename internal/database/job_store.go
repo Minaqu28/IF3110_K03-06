@@ -21,6 +21,10 @@ func NewJobPostgresStore(db *sql.DB) *JobPostgresStore {
 }
 
 func (s *JobPostgresStore) CreateJob(ctx context.Context, job domain.Job) error {
+	return createJob(ctx, s.db, job)
+}
+
+func createJob(ctx context.Context, q dbtx, job domain.Job) error {
 	if job.ID == "" || job.ExecutionID == "" {
 		return admin.ErrInvalidInput
 	}
@@ -28,7 +32,7 @@ func (s *JobPostgresStore) CreateJob(ctx context.Context, job domain.Job) error 
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `
+	result, err := q.ExecContext(ctx, `
 		INSERT INTO migration_jobs (id, execution_id, database_id, progress)
 		SELECT $1, e.id, e.database_id, $4::jsonb
 		FROM migration_executions e
