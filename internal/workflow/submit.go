@@ -21,9 +21,10 @@ type BatchScope struct {
 }
 
 type Submission struct {
-	Request domain.ExecutionRequest
-	JobID   string
-	Scope   *BatchScope
+	Request      domain.ExecutionRequest
+	JobID        string
+	Scope        *BatchScope
+	TraceContext map[string]string
 }
 
 type SubmitResult struct {
@@ -80,7 +81,12 @@ func (s *SubmitService) SubmitExecution(ctx context.Context, actor domain.User, 
 	if err != nil {
 		return domain.Job{}, err
 	}
-	result, err := s.submitter.SubmitExecution(ctx, Submission{Request: req, JobID: jobID, Scope: scope}, func(state SubmitState) error {
+	result, err := s.submitter.SubmitExecution(ctx, Submission{
+		Request:      req,
+		JobID:        jobID,
+		Scope:        scope,
+		TraceContext: observability.InjectTraceContext(ctx),
+	}, func(state SubmitState) error {
 		return CanSubmit(state, req)
 	})
 	if err != nil {

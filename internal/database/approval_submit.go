@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	_ workflow.GrantReader     = (*ApprovalPostgresStore)(nil)
-	_ workflow.ReviewSubmitter = (*ApprovalPostgresStore)(nil)
+	_ workflow.GrantReader           = (*ApprovalPostgresStore)(nil)
+	_ workflow.ReviewSubmitter       = (*ApprovalPostgresStore)(nil)
+	_ workflow.ActionReviewSubmitter = (*ApprovalPostgresStore)(nil)
 )
 
 func (s *ApprovalPostgresStore) ListGroupGrants(ctx context.Context, databaseID int64) ([]workflow.GroupGrant, error) {
@@ -39,7 +40,23 @@ func (s *ApprovalPostgresStore) ListGroupGrants(ctx context.Context, databaseID 
 }
 
 func (s *ApprovalPostgresStore) SubmitForReview(ctx context.Context, databaseID, revisionID, requestedBy int64, approvers []workflow.RequiredApprover) (domain.ReviewRequest, error) {
+	return s.SubmitActionForReview(ctx, databaseID, revisionID, requestedBy, domain.MigrationActionApply, nil, approvers)
+}
+
+func (s *ApprovalPostgresStore) SubmitActionForReview(ctx context.Context, databaseID, revisionID, requestedBy int64, action domain.MigrationAction, targetExecutionID *string, approvers []workflow.RequiredApprover) (domain.ReviewRequest, error) {
 	if len(approvers) == 0 {
+		return domain.ReviewRequest{}, admin.ErrInvalidInput
+	}
+	if action == "" {
+		action = domain.MigrationActionApply
+	}
+	if !action.Valid() {
+		return domain.ReviewRequest{}, admin.ErrInvalidInput
+	}
+	if action == domain.MigrationActionRollback && (targetExecutionID == nil || *targetExecutionID == "") {
+		return domain.ReviewRequest{}, admin.ErrInvalidInput
+	}
+	if action != domain.MigrationActionRollback && targetExecutionID != nil {
 		return domain.ReviewRequest{}, admin.ErrInvalidInput
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -47,11 +64,34 @@ func (s *ApprovalPostgresStore) SubmitForReview(ctx context.Context, databaseID,
 		return domain.ReviewRequest{}, err
 	}
 	defer tx.Rollback()
-	rev, err := lockRevisionTx(ctx, tx, databaseID, revisionID)
-	if err != nil {
-		return domain.ReviewRequest{}, err
+
+	var rev domain.MigrationRevision
+	if action == domain.MigrationActionApply {
+		rev, err = lockRevisionTx(ctx, tx, databaseID, revisionID)
+		if err != nil {
+			return domain.ReviewRequest{}, err
+		}
+	} else {
+		rev, err = scanRevision(tx.QueryRowContext(ctx, `
+			SELECT `+revisionColumns+` FROM migration_revisions
+			WHERE database_id = $1 AND id = $2 FOR SHARE`, databaseID, revisionID))
+		if err != nil {
+			return domain.ReviewRequest{}, adminError(err)
+		}
+		if rev.Status != domain.RevisionStatusApproved || rev.LockedAt == nil {
+			return domain.ReviewRequest{}, admin.ErrConflict
+		}
+		if action == domain.MigrationActionRollback && !rev.Reversible {
+			return domain.ReviewRequest{}, workflow.ErrIrreversible
+		}
 	}
-	review, err := createReviewTx(ctx, tx, domain.ReviewRequest{RevisionID: rev.ID, DefinitionHash: rev.DefinitionHash, RequestedBy: requestedBy})
+	review, err := createReviewTx(ctx, tx, domain.ReviewRequest{
+		RevisionID:        rev.ID,
+		Action:            action,
+		TargetExecutionID: targetExecutionID,
+		DefinitionHash:    rev.DefinitionHash,
+		RequestedBy:       requestedBy,
+	})
 	if err != nil {
 		return domain.ReviewRequest{}, err
 	}

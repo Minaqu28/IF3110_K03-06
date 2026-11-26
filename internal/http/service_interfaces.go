@@ -17,3 +17,20 @@ type WorkflowJobService interface {
 	SubmitExecution(context.Context, domain.User, domain.ExecutionRequest) (domain.Job, error)
 	GetJob(context.Context, domain.User, string) (domain.Job, error)
 }
+
+type RevisionWorkflowService interface {
+	CreateRevision(context.Context, domain.User, domain.MigrationRevision) (domain.MigrationRevision, error)
+	SubmitForReview(context.Context, domain.User, int64, int64) (domain.ReviewRequest, error)
+}
+
+type ActionReviewWorkflowService interface {
+	SubmitActionForReview(context.Context, domain.User, int64, int64, domain.MigrationAction, *string) (domain.ReviewRequest, error)
+}
+
+type ReviewDecisionService interface {
+	ListReviewDecisions(context.Context, domain.User, int64, int64) ([]domain.ApprovalDecision, error)
+}
+
+type ExecutionDetailService interface {
+	GetExecution(context.Context, domain.User, string) (domain.ExecutionRequest, domain.ExecutionResult, error)
+}

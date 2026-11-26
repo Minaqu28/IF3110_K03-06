@@ -18,7 +18,8 @@ a {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -98,12 +99,85 @@ h2 {
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   display: block;
-  width: min(100%, 28rem);
+  width: min(100%, 36rem);
   min-height: 2.75rem;
   padding: 0.5rem;
   border: 1px solid #8593a8;
+}
+
+.field textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  resize: vertical;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.field input[type="checkbox"] {
+  display: inline-block;
+  width: 1.15rem;
+  height: 1.15rem;
+  min-height: auto;
+  margin: 0;
+}
+
+.sub-nav,
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 0.75rem 0;
+}
+
+.sub-nav a,
+.pill,
+.active-pill,
+.button-link {
+  display: inline-block;
+  padding: 0.45rem 0.8rem;
+  background: #fff;
+  border: 1px solid #8593a8;
+  text-decoration: none;
+}
+
+.sub-nav a.active,
+.active-pill {
+  background: #164a9d;
+  color: #fff;
+  border-color: #164a9d;
+}
+
+.stack-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.sql-block {
+  overflow: auto;
+  max-width: 100%;
+  padding: 0.75rem;
+  background: #0f172a;
+  color: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9rem;
+  border-radius: 4px;
+}
+
+.inline-form {
+  margin-top: 0.75rem;
+  border-style: dashed;
 }
 
 .error {

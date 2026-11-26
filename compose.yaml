@@ -7,7 +7,8 @@ services:
     environment:
       DATABASE_URL: "postgres://platform:${PLATFORM_DB_PASSWORD:?Set PLATFORM_DB_PASSWORD in .env}@platform-db:5432/platform?sslmode=disable"
       AMQP_URL: "amqp://platform:${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}@rabbitmq:5672/"
-      ASYNC_MIGRATIONS: "${ASYNC_MIGRATIONS:-false}"
+      ASYNC_MIGRATIONS: "${ASYNC_MIGRATIONS:-true}"
+      OTEL_TRACES_EXPORTER: "${OTEL_TRACES_EXPORTER:-console}"
     ports:
       - "${APP_HOST_PORT:-8080}:8080"
     depends_on:
@@ -27,6 +28,7 @@ services:
       AMQP_URL: "amqp://platform:${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}@rabbitmq:5672/"
       WORKER_SLOTS: "${WORKER_SLOTS:-4}"
       MIGRATION_BATCH_TIMEOUT: "${MIGRATION_BATCH_TIMEOUT:-5m}"
+      OTEL_TRACES_EXPORTER: "${OTEL_TRACES_EXPORTER:-console}"
     depends_on:
       platform-db:
         condition: service_healthy

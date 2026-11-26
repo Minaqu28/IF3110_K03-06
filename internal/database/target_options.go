@@ -80,5 +80,5 @@ func (s *AdminPostgresStore) openTarget(ctx context.Context, dbID int64, opts Ta
 	if err != nil {
 		return nil, describeConnectError(err)
 	}
-	return &pgTarget{conn: conn, readOnly: opts.ReadOnly}, nil
+	return &pgTarget{conn: conn, readOnly: opts.ReadOnly, dbID: c.ID, dbName: c.Name}, nil
 }

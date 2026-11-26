@@ -49,9 +49,15 @@ func (s *HistoryPostgresStore) ListAttempts(ctx context.Context, databaseID int6
 
 func (s *HistoryPostgresStore) ListExecutionHistory(ctx context.Context, databaseID int64, hideRollback bool) ([]domain.ExecutionAttempt, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT a.attempt_id, a.execution_id, a.attempt_number, a.status, a.sql_snapshot,
+		SELECT a.attempt_id, a.execution_id, e.migration_id, m.version, e.revision_id, r.revision,
+		       e.action, e.mode, COALESCE(e.requested_by, 0), COALESCE(u.username, ''),
+		       e.target_execution_id::text, a.attempt_number, a.status, a.sql_snapshot,
 		       a.error_code, a.error_message, a.started_at, a.finished_at
 		FROM execution_attempts a
+		JOIN migration_executions e ON e.id = a.execution_id
+		JOIN migrations m ON m.id = e.migration_id
+		JOIN migration_revisions r ON r.id = e.revision_id
+		LEFT JOIN users u ON u.id = e.requested_by
 		WHERE a.database_id = $1
 		  AND (
 		    NOT $2
@@ -71,17 +77,28 @@ func (s *HistoryPostgresStore) ListExecutionHistory(ctx context.Context, databas
 	var attempts []domain.ExecutionAttempt
 	for rows.Next() {
 		var (
-			a               domain.ExecutionAttempt
-			status          string
-			errCode, errMsg sql.NullString
-			finishedAt      sql.NullTime
+			a                    domain.ExecutionAttempt
+			action, mode, status string
+			reverts              sql.NullString
+			errCode, errMsg      sql.NullString
+			finishedAt           sql.NullTime
 		)
-		if err := rows.Scan(&a.AttemptID, &a.ExecutionID, &a.AttemptNumber, &status, &a.SQLSnapshot,
-			&errCode, &errMsg, &a.StartedAt, &finishedAt); err != nil {
+		if err := rows.Scan(
+			&a.AttemptID, &a.ExecutionID, &a.MigrationID, &a.MigrationVersion, &a.RevisionID, &a.Revision,
+			&action, &mode, &a.ActorID, &a.ActorUsername,
+			&reverts, &a.AttemptNumber, &status, &a.SQLSnapshot,
+			&errCode, &errMsg, &a.StartedAt, &finishedAt,
+		); err != nil {
 			return nil, err
 		}
+		a.Action = domain.MigrationAction(action)
+		a.Mode = domain.ExecutionMode(mode)
 		a.Status = domain.ExecutionStatus(status)
 		a.ErrorCode, a.ErrorMessage = errCode.String, errMsg.String
+		if reverts.Valid {
+			t := reverts.String
+			a.RevertsExecutionID = &t
+		}
 		if finishedAt.Valid {
 			t := finishedAt.Time
 			a.FinishedAt = &t

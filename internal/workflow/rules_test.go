@@ -28,20 +28,20 @@ func TestRequiredGroups(t *testing.T) {
 			want: []RequiredApprover{{10, 100}, {20, 200}, {30, 300}},
 		},
 		{
-			name: "view-only groups are not required",
+			name: "view-only and view-edit groups are both required",
 			grants: []GroupGrant{
 				{GroupID: 10, DatabaseID: db, LeaderID: 100, Level: edit},
 				{GroupID: 20, DatabaseID: db, LeaderID: 200, Level: view},
 			},
-			want: []RequiredApprover{{10, 100}},
+			want: []RequiredApprover{{10, 100}, {20, 200}},
 		},
 		{
-			name: "edit groups without a leader are skipped",
+			name: "group with access but without a leader is rejected",
 			grants: []GroupGrant{
 				{GroupID: 10, DatabaseID: db, LeaderID: 0, Level: edit},
 				{GroupID: 20, DatabaseID: db, LeaderID: 200, Level: edit},
 			},
-			want: []RequiredApprover{{20, 200}},
+			err: ErrGroupMissingLeader,
 		},
 		{
 			name: "grants on other databases are ignored",
@@ -75,9 +75,9 @@ func TestRequiredGroups(t *testing.T) {
 			err: ErrNoApprovers,
 		},
 		{
-			name:   "no edit group with a leader",
-			grants: []GroupGrant{{GroupID: 10, DatabaseID: db, LeaderID: 100, Level: view}},
-			err:    ErrNoApprovers,
+			name:   "view-only group without a leader is rejected",
+			grants: []GroupGrant{{GroupID: 10, DatabaseID: db, LeaderID: 0, Level: view}},
+			err:    ErrGroupMissingLeader,
 		},
 		{name: "no grants", err: ErrNoApprovers},
 	}

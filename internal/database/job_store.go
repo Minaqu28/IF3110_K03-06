@@ -21,10 +21,10 @@ func NewJobPostgresStore(db *sql.DB) *JobPostgresStore {
 }
 
 func (s *JobPostgresStore) CreateJob(ctx context.Context, job domain.Job) error {
-	return createJob(ctx, s.db, job)
+	return createJob(ctx, s.db, job, nil)
 }
 
-func createJob(ctx context.Context, q dbtx, job domain.Job) error {
+func createJob(ctx context.Context, q dbtx, job domain.Job, traceContext map[string]string) error {
 	if job.ID == "" || job.ExecutionID == "" {
 		return admin.ErrInvalidInput
 	}
@@ -32,12 +32,16 @@ func createJob(ctx context.Context, q dbtx, job domain.Job) error {
 	if err != nil {
 		return err
 	}
+	traceRaw, err := traceContextJSON(traceContext)
+	if err != nil {
+		return err
+	}
 	result, err := q.ExecContext(ctx, `
-		INSERT INTO migration_jobs (id, execution_id, database_id, progress)
-		SELECT $1, e.id, e.database_id, $4::jsonb
+		INSERT INTO migration_jobs (id, execution_id, database_id, progress, trace_context)
+		SELECT $1, e.id, e.database_id, $4::jsonb, $5::jsonb
 		FROM migration_executions e
 		WHERE e.id = $2 AND e.database_id = $3`,
-		job.ID, job.ExecutionID, job.DatabaseID, progress)
+		job.ID, job.ExecutionID, job.DatabaseID, progress, traceRaw)
 	if err != nil {
 		return adminError(err)
 	}
@@ -47,6 +51,17 @@ func createJob(ctx context.Context, q dbtx, job domain.Job) error {
 		return admin.ErrNotFound
 	}
 	return nil
+}
+
+func traceContextJSON(tc map[string]string) (sql.NullString, error) {
+	if len(tc) == 0 {
+		return sql.NullString{}, nil
+	}
+	b, err := json.Marshal(tc)
+	if err != nil {
+		return sql.NullString{}, err
+	}
+	return sql.NullString{String: string(b), Valid: true}, nil
 }
 
 func (s *JobPostgresStore) GetJob(ctx context.Context, jobID string) (domain.Job, error) {

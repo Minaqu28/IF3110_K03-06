@@ -236,6 +236,40 @@ func TestCanSubmit(t *testing.T) {
 		{name: "stored hash does not match the SQL", want: ErrNotApproved,
 			state: func(s *SubmitState) { s.Revision.UpSQL = "DROP TABLE t" },
 			req:   func() domain.ExecutionRequest { return request(apply, "") }},
+		{name: "apply review cannot authorize rollback", want: ErrNotApproved,
+			state: func(s *SubmitState) {
+				s.Review.Action = apply
+				s.Executions = []ExecutionSummary{exec("a", 0, apply, succeeded)}
+			},
+			req: func() domain.ExecutionRequest { return request(rollback, "a") }},
+		{name: "apply review cannot authorize forward", want: ErrNotApproved,
+			state: func(s *SubmitState) {
+				s.Review.Action = apply
+				s.Executions = []ExecutionSummary{exec("a", 0, apply, succeeded), rollbackOf("r", "a", 1, succeeded)}
+			},
+			req: func() domain.ExecutionRequest { return request(forward, "") }},
+		{name: "rollback review for different target execution rejected", want: ErrNotApproved,
+			state: func(s *SubmitState) {
+				other := "a"
+				s.Review.Action = rollback
+				s.Review.TargetExecutionID = &other
+				s.Executions = []ExecutionSummary{exec("a", 0, apply, succeeded), rollbackOf("r", "a", 1, succeeded), exec("f", 2, forward, succeeded)}
+			},
+			req: func() domain.ExecutionRequest { return request(rollback, "f") }},
+		{name: "rollback review matching target execution succeeds",
+			state: func(s *SubmitState) {
+				target := "a"
+				s.Review.Action = rollback
+				s.Review.TargetExecutionID = &target
+				s.Executions = []ExecutionSummary{exec("a", 0, apply, succeeded)}
+			},
+			req: func() domain.ExecutionRequest { return request(rollback, "a") }},
+		{name: "forward review authorizes forward",
+			state: func(s *SubmitState) {
+				s.Review.Action = forward
+				s.Executions = []ExecutionSummary{exec("a", 0, apply, succeeded), rollbackOf("r", "a", 1, succeeded)}
+			},
+			req: func() domain.ExecutionRequest { return request(forward, "") }},
 
 		{name: "unknown action", want: admin.ErrInvalidInput,
 			req: func() domain.ExecutionRequest { return request("RESUME", "") }},

@@ -1,9 +1,11 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
@@ -11,6 +13,8 @@ import (
 	"github.com/Minaqu28/IF3110_K03-06/internal/authorization"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 	"github.com/Minaqu28/IF3110_K03-06/internal/explorer"
+	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
+	"github.com/Minaqu28/IF3110_K03-06/internal/workflow"
 )
 
 func jsonData(w http.ResponseWriter, status int, value any) {
@@ -36,7 +40,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 	return true
 }
 
-func (h *AuthenticationHandler) apiSession(w http.ResponseWriter, r *http.Request) (authentication.Session, bool) {
+func (h *AuthenticationHandler) spaSession(w http.ResponseWriter, r *http.Request) (authentication.Session, bool) {
 	session, err := h.session(w, r)
 	if errors.Is(err, authentication.ErrUnauthenticated) {
 		jsonError(w, 401, "UNAUTHENTICATED", "Silakan masuk terlebih dahulu.")
@@ -74,20 +78,36 @@ func (h *AuthenticationHandler) apiLogin(w http.ResponseWriter, r *http.Request)
 	}
 	identifier, err := h.service.Login(r.Context(), input.Username, input.Password)
 	if errors.Is(err, authentication.ErrInvalidCredentials) {
+		slog.WarnContext(r.Context(), "api login failed",
+			slog.String("event", "auth.login"),
+			slog.String("actor", input.Username),
+			slog.String("status", "unauthorized"),
+		)
 		jsonError(w, 401, "INVALID_CREDENTIALS", "Username atau password salah.")
 		return
 	}
 	if err != nil {
+		slog.ErrorContext(r.Context(), "api login error",
+			slog.String("event", "auth.login"),
+			slog.String("actor", input.Username),
+			slog.String("status", "error"),
+			slog.String("error", err.Error()),
+		)
 		jsonError(w, 500, "INTERNAL_ERROR", "Terjadi kesalahan internal.")
 		return
 	}
+	slog.InfoContext(r.Context(), "api login succeeded",
+		slog.String("event", "auth.login"),
+		slog.String("actor", input.Username),
+		slog.String("status", "ok"),
+	)
 	h.clearCookie(w, loginCSRFCookie, "/api/v1/auth/login")
 	h.setCookie(w, sessionCookie, identifier, "/", 0)
 	jsonData(w, 200, map[string]bool{"authenticated": true})
 }
 
 func (h *AuthenticationHandler) apiCurrentSession(w http.ResponseWriter, r *http.Request) {
-	session, ok := h.apiSession(w, r)
+	session, ok := h.spaSession(w, r)
 	if !ok {
 		return
 	}
@@ -95,7 +115,7 @@ func (h *AuthenticationHandler) apiCurrentSession(w http.ResponseWriter, r *http
 }
 
 func (h *AuthenticationHandler) apiLogout(w http.ResponseWriter, r *http.Request) {
-	session, ok := h.apiSession(w, r)
+	session, ok := h.spaSession(w, r)
 	if !ok {
 		return
 	}
@@ -104,10 +124,20 @@ func (h *AuthenticationHandler) apiLogout(w http.ResponseWriter, r *http.Request
 		return
 	}
 	cookie, _ := r.Cookie(sessionCookie)
-	if err := h.service.Logout(r.Context(), cookie.Value); err != nil {
+	ctx := observability.WithActor(r.Context(), session.User.ID, session.User.Username)
+	if err := h.service.Logout(ctx, cookie.Value); err != nil {
+		slog.ErrorContext(ctx, "api logout failed",
+			slog.String("event", "auth.logout"),
+			slog.String("status", "error"),
+			slog.String("error", err.Error()),
+		)
 		jsonError(w, 500, "INTERNAL_ERROR", "Terjadi kesalahan internal.")
 		return
 	}
+	slog.InfoContext(ctx, "api logout succeeded",
+		slog.String("event", "auth.logout"),
+		slog.String("status", "ok"),
+	)
 	h.clearCookie(w, sessionCookie, "/")
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -118,11 +148,16 @@ func apiServiceError(w http.ResponseWriter, err error) {
 		jsonError(w, 403, "FORBIDDEN", "Akses ditolak.")
 	case errors.Is(err, admin.ErrNotFound):
 		jsonError(w, 404, "NOT_FOUND", "Data tidak ditemukan.")
-	case errors.Is(err, admin.ErrInvalidInput):
-		jsonError(w, 400, "INVALID_INPUT", "Input tidak valid.")
+	case errors.Is(err, admin.ErrInvalidInput), errors.Is(err, explorer.ErrInvalidPlanQuery):
+		jsonError(w, 400, "INVALID_INPUT", publicMessage(err, admin.ErrInvalidInput))
+	case errors.Is(err, workflow.ErrGroupMissingLeader):
+		jsonError(w, 409, "MISSING_GROUP_LEADER", "Setiap grup yang memiliki akses ke database harus memiliki leader terlebih dahulu.")
+	case errors.Is(err, workflow.ErrNoApprovers):
+		jsonError(w, 409, "NO_APPROVERS", "Belum ada group leader yang ditetapkan untuk database ini.")
 	case errors.Is(err, admin.ErrConflict):
-		jsonError(w, 409, "CONFLICT", "Operasi bertentangan dengan kondisi saat ini.")
+		jsonError(w, 409, "CONFLICT", publicMessage(err, admin.ErrConflict))
 	default:
+		slog.Error("spa api request failed", slog.String("event", "api.error"), slog.String("error", err.Error()))
 		jsonError(w, 500, "INTERNAL_ERROR", "Terjadi kesalahan internal.")
 	}
 }
@@ -131,12 +166,25 @@ func connectionJSON(c domain.Connection) map[string]any {
 	return map[string]any{"id": c.ID, "name": c.Name}
 }
 
+func adminConnectionJSON(c domain.Connection) map[string]any {
+	return map[string]any{
+		"id":       c.ID,
+		"name":     c.Name,
+		"host":     c.Host,
+		"port":     c.Port,
+		"db_name":  c.DBname,
+		"db_user":  c.DBuser,
+		"ssl_mode": c.SSLMode,
+	}
+}
+
 func (h *AdminHandler) apiDatabases(w http.ResponseWriter, r *http.Request) {
-	session, ok := h.auth.apiSession(w, r)
+	session, ok := h.auth.spaSession(w, r)
 	if !ok {
 		return
 	}
-	connections, err := h.service.ListAccessibleConnections(r.Context(), session.User)
+	ctx := observability.WithActor(r.Context(), session.User.ID, session.User.Username)
+	connections, err := h.service.ListAccessibleConnections(ctx, session.User)
 	if err != nil {
 		apiServiceError(w, err)
 		return
@@ -149,7 +197,7 @@ func (h *AdminHandler) apiDatabases(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminHandler) apiAdmin(w http.ResponseWriter, r *http.Request) {
-	session, ok := h.auth.apiSession(w, r)
+	session, ok := h.auth.spaSession(w, r)
 	if !ok {
 		return
 	}
@@ -157,7 +205,7 @@ func (h *AdminHandler) apiAdmin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, 403, "FORBIDDEN", "Akses admin ditolak.")
 		return
 	}
-	ctx, actor := r.Context(), session.User
+	ctx, actor := observability.WithActor(r.Context(), session.User.ID, session.User.Username), session.User
 	users, err := h.service.ListUsers(ctx, actor)
 	if err != nil {
 		apiServiceError(w, err)
@@ -189,7 +237,12 @@ func (h *AdminHandler) apiAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 	groupData := make([]map[string]any, 0, len(groups))
 	for _, g := range groups {
-		groupData = append(groupData, map[string]any{"id": g.ID, "name": g.Name})
+		groupData = append(groupData, map[string]any{
+			"id":              g.ID,
+			"name":            g.Name,
+			"leader_id":       g.LeaderID,
+			"leader_username": g.LeaderUsername,
+		})
 	}
 	membershipData := make([]map[string]any, 0, len(memberships))
 	for _, m := range memberships {
@@ -197,7 +250,7 @@ func (h *AdminHandler) apiAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 	connectionData := make([]map[string]any, 0, len(connections))
 	for _, c := range connections {
-		connectionData = append(connectionData, connectionJSON(c))
+		connectionData = append(connectionData, adminConnectionJSON(c))
 	}
 	grantData := make([]map[string]any, 0, len(grants))
 	for _, g := range grants {
@@ -208,7 +261,7 @@ func (h *AdminHandler) apiAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminHandler) apiAdminAction(w http.ResponseWriter, r *http.Request) {
-	session, ok := h.auth.apiSession(w, r)
+	session, ok := h.auth.spaSession(w, r)
 	if !ok {
 		return
 	}
@@ -225,6 +278,7 @@ func (h *AdminHandler) apiAdminAction(w http.ResponseWriter, r *http.Request) {
 		ID         int64                     `json:"id"`
 		GroupID    int64                     `json:"group_id"`
 		UserID     int64                     `json:"user_id"`
+		LeaderID   *int64                    `json:"leader_id"`
 		DatabaseID int64                     `json:"database_id"`
 		Username   string                    `json:"username"`
 		Password   string                    `json:"password"`
@@ -241,25 +295,81 @@ func (h *AdminHandler) apiAdminAction(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	actor, ctx := session.User, r.Context()
+	actor := session.User
+	ctx := observability.WithActor(r.Context(), actor.ID, actor.Username)
+	userID := in.UserID
+	if userID == 0 {
+		userID = in.ID
+	}
+	groupID := in.GroupID
+	if groupID == 0 {
+		groupID = in.ID
+	}
+	dbID := in.DatabaseID
+	if dbID == 0 {
+		dbID = in.ID
+	}
 	var err error
 	renew := false
 	switch in.Action {
 	case "create_user":
 		_, err = h.service.CreateUser(ctx, actor, admin.CreateUserInput{Username: in.Username, Password: in.Password, IsAdmin: in.IsAdmin})
+	case "update_user":
+		err = h.service.UpdateUser(ctx, actor, userID, admin.UpdateUserInput{Username: in.Username, IsAdmin: in.IsAdmin})
+		renew = userID == actor.ID
+	case "set_user_active":
+		err = h.service.SetUserActive(ctx, actor, userID, in.Active)
+	case "reset_password":
+		err = h.service.ResetPassword(ctx, actor, userID, in.Password)
+		renew = userID == actor.ID
+	case "delete_user":
+		err = h.service.DeleteUser(ctx, actor, userID)
 	case "create_group":
 		_, err = h.service.CreateGroup(ctx, actor, in.Name)
+	case "rename_group":
+		err = h.service.RenameGroup(ctx, actor, groupID, in.Name)
+	case "set_group_leader":
+		var leaderID *int64
+		if in.LeaderID != nil && *in.LeaderID > 0 {
+			id := *in.LeaderID
+			leaderID = &id
+		}
+		err = h.service.SetGroupLeader(ctx, actor, groupID, leaderID)
+		if err == nil {
+			var lid int64
+			if leaderID != nil {
+				lid = *leaderID
+			}
+			slog.InfoContext(ctx, "group leader updated via api",
+				slog.String("event", "admin.group.set_leader"),
+				slog.Int64("group_id", groupID),
+				slog.Int64("leader_id", lid),
+				slog.String("status", "ok"),
+			)
+		}
+	case "delete_group":
+		err = h.service.DeleteGroup(ctx, actor, groupID)
+		renew = true
 	case "add_member":
-		err = h.service.AddMember(ctx, actor, in.GroupID, in.UserID)
-		renew = in.UserID == actor.ID
+		err = h.service.AddMember(ctx, actor, groupID, userID)
+		renew = userID == actor.ID
 	case "remove_member":
-		err = h.service.RemoveMember(ctx, actor, in.GroupID, in.UserID)
-		renew = in.UserID == actor.ID
+		err = h.service.RemoveMember(ctx, actor, groupID, userID)
+		renew = userID == actor.ID
 	case "grant":
-		err = h.service.GrantAccess(ctx, actor, in.GroupID, in.DatabaseID, in.Level)
+		err = h.service.GrantAccess(ctx, actor, groupID, dbID, in.Level)
+		renew = true
+	case "revoke":
+		err = h.service.RevokeAccess(ctx, actor, groupID, dbID)
 		renew = true
 	case "create_connection":
 		_, err = h.service.CreateConnection(ctx, actor, admin.CreateConnectionInput{Connection: domain.Connection{Name: in.Name, Host: in.Host, Port: in.Port, DBname: in.DBName, DBuser: in.DBUser, SSLMode: in.SSLMode}, Password: in.Password})
+	case "update_connection":
+		err = h.service.UpdateConnection(ctx, actor, admin.CreateConnectionInput{Connection: domain.Connection{ID: dbID, Name: in.Name, Host: in.Host, Port: in.Port, DBname: in.DBName, DBuser: in.DBUser, SSLMode: in.SSLMode}, Password: in.Password})
+		renew = true
+	case "delete_connection":
+		err = h.service.DeleteConnection(ctx, actor, dbID)
+		renew = true
 	default:
 		jsonError(w, 400, "INVALID_ACTION", "Operasi admin belum didukung.")
 		return
@@ -278,8 +388,26 @@ func (h *AdminHandler) apiAdminAction(w http.ResponseWriter, r *http.Request) {
 	jsonData(w, 200, map[string]bool{"ok": true})
 }
 
+func statementResultJSON(res explorer.StatementResult) map[string]any {
+	rows := make([][]map[string]any, 0, len(res.Rows))
+	for _, row := range res.Rows {
+		cells := make([]map[string]any, 0, len(row))
+		for _, cell := range row {
+			cells = append(cells, map[string]any{"value": cell.Value, "null": cell.Null})
+		}
+		rows = append(rows, cells)
+	}
+	return map[string]any{
+		"command":   res.Command,
+		"columns":   res.Columns,
+		"rows":      rows,
+		"truncated": res.Truncated,
+		"error":     res.Error,
+	}
+}
+
 func (h *DatabaseHandler) apiDatabase(w http.ResponseWriter, r *http.Request) {
-	session, ok := h.auth.apiSession(w, r)
+	session, ok := h.auth.spaSession(w, r)
 	if !ok {
 		return
 	}
@@ -296,13 +424,18 @@ func (h *DatabaseHandler) apiDatabase(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	view, err := h.service.BrowseTable(r.Context(), session.User, id, r.URL.Query().Get("schema"), r.URL.Query().Get("table"), int(page))
+	ctx, cancel := context.WithTimeout(
+		observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""),
+		databaseRequestTimeout,
+	)
+	defer cancel()
+	view, err := h.service.BrowseTable(ctx, session.User, id, r.URL.Query().Get("schema"), r.URL.Query().Get("table"), int(page))
 	if err != nil {
 		apiServiceError(w, err)
 		return
 	}
 	if view.Unavailable {
-		jsonError(w, 502, "TARGET_UNAVAILABLE", "Database target tidak tersedia.")
+		jsonError(w, 502, "TARGET_UNAVAILABLE", view.Error)
 		return
 	}
 	tables := make([]map[string]any, 0, len(view.Tables))
@@ -311,15 +444,133 @@ func (h *DatabaseHandler) apiDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	var preview any
 	if view.Preview != nil {
-		rows := make([][]map[string]any, 0, len(view.Preview.Rows))
-		for _, row := range view.Preview.Rows {
-			cells := make([]map[string]any, 0, len(row))
-			for _, cell := range row {
-				cells = append(cells, map[string]any{"value": cell.Value, "null": cell.Null})
-			}
-			rows = append(rows, cells)
-		}
-		preview = map[string]any{"columns": view.Preview.Columns, "rows": rows, "truncated": view.Preview.Truncated}
+		preview = statementResultJSON(*view.Preview)
 	}
-	jsonData(w, 200, map[string]any{"connection": connectionJSON(view.Connection), "level": view.Level, "schemas": view.Schemas, "schema": view.Schema, "tables": tables, "table": view.Table, "preview": preview, "page": view.Page, "has_prev": view.HasPrev, "has_next": view.HasNext})
+	var details any
+	if view.Details != nil {
+		cols := make([]map[string]any, 0, len(view.Details.Columns))
+		for _, c := range view.Details.Columns {
+			cols = append(cols, map[string]any{"name": c.Name, "type": c.Type, "nullable": c.Nullable, "default": c.Default})
+		}
+		constraints := make([]map[string]any, 0, len(view.Details.Constraints))
+		for _, c := range view.Details.Constraints {
+			constraints = append(constraints, map[string]any{"name": c.Name, "type": c.Type, "definition": c.Definition})
+		}
+		indexes := make([]map[string]any, 0, len(view.Details.Indexes))
+		for _, idx := range view.Details.Indexes {
+			indexes = append(indexes, map[string]any{"name": idx.Name, "definition": idx.Definition})
+		}
+		details = map[string]any{"columns": cols, "constraints": constraints, "indexes": indexes}
+	}
+	changes := make([]map[string]any, 0, len(view.Changes))
+	for _, ch := range view.Changes {
+		changes = append(changes, map[string]any{
+			"id": ch.ID, "migration_version": ch.MigrationVersion, "source": ch.Source,
+			"sql": ch.SQL, "status": ch.Status, "error": ch.Error,
+			"duration_ms": ch.DurationMs, "username": ch.Username, "created_at": ch.CreatedAt,
+		})
+	}
+	jsonData(w, 200, map[string]any{
+		"connection": connectionJSON(view.Connection),
+		"level":      view.Level,
+		"can_edit":   view.CanEdit(),
+		"schemas":    view.Schemas,
+		"schema":     view.Schema,
+		"tables":     tables,
+		"table":      view.Table,
+		"details":    details,
+		"preview":    preview,
+		"page":       view.Page,
+		"has_prev":   view.HasPrev,
+		"has_next":   view.HasNext,
+		"changes":    changes,
+		"error":      view.Error,
+	})
+}
+
+func (h *DatabaseHandler) apiQuery(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.auth.spaSession(w, r)
+	if !ok {
+		return
+	}
+	if session.Previous || !sameToken(r.Header.Get("X-CSRF-Token"), session.CSRFToken) {
+		jsonError(w, 403, "INVALID_CSRF", "Token CSRF tidak valid.")
+		return
+	}
+	id, err := positiveID(r.PathValue("id"))
+	if err != nil {
+		jsonError(w, 400, "INVALID_ID", "ID database tidak valid.")
+		return
+	}
+	var input struct {
+		SQL string `json:"sql"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(
+		observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""),
+		databaseRequestTimeout,
+	)
+	defer cancel()
+	view, err := h.service.Execute(ctx, session.User, id, input.SQL)
+	if errors.Is(err, explorer.ErrReadOnly) {
+		jsonError(w, 403, "READ_ONLY", view.Error)
+		return
+	}
+	if err != nil {
+		apiServiceError(w, err)
+		return
+	}
+	if view.Unavailable {
+		jsonError(w, 502, "TARGET_UNAVAILABLE", view.Error)
+		return
+	}
+	results := make([]map[string]any, 0, len(view.Results))
+	for _, res := range view.Results {
+		results = append(results, statementResultJSON(res))
+	}
+	jsonData(w, 200, map[string]any{"results": results, "error": view.Error})
+}
+
+func (h *DatabaseHandler) apiExplain(w http.ResponseWriter, r *http.Request) {
+	session, ok := h.auth.spaSession(w, r)
+	if !ok {
+		return
+	}
+	if session.Previous || !sameToken(r.Header.Get("X-CSRF-Token"), session.CSRFToken) {
+		jsonError(w, 403, "INVALID_CSRF", "Token CSRF tidak valid.")
+		return
+	}
+	id, err := positiveID(r.PathValue("id"))
+	if err != nil {
+		jsonError(w, 400, "INVALID_ID", "ID database tidak valid.")
+		return
+	}
+	var input struct {
+		SQL  string `json:"sql"`
+		Mode string `json:"mode"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(
+		observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""),
+		databaseRequestTimeout,
+	)
+	defer cancel()
+	view, err := h.service.Explain(ctx, session.User, id, input.SQL, input.Mode)
+	if errors.Is(err, explorer.ErrInvalidPlanQuery) {
+		jsonError(w, 400, "INVALID_PLAN_QUERY", view.Error)
+		return
+	}
+	if err != nil {
+		apiServiceError(w, err)
+		return
+	}
+	if view.Unavailable {
+		jsonError(w, 502, "TARGET_UNAVAILABLE", view.Error)
+		return
+	}
+	jsonData(w, 200, map[string]any{"mode": view.PlanMode, "plan": view.Plan, "error": view.Error})
 }

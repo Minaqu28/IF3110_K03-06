@@ -21,14 +21,12 @@ import (
 	"github.com/Minaqu28/IF3110_K03-06/internal/database"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 	"github.com/Minaqu28/IF3110_K03-06/internal/explorer"
-	"github.com/Minaqu28/IF3110_K03-06/internal/http"
+	httpserver "github.com/Minaqu28/IF3110_K03-06/internal/http"
 	"github.com/Minaqu28/IF3110_K03-06/internal/migration"
 	"github.com/Minaqu28/IF3110_K03-06/internal/migrationengine"
 	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
-	"github.com/Minaqu28/IF3110_K03-06/internal/queue"
 	"github.com/Minaqu28/IF3110_K03-06/internal/worker"
 	"github.com/Minaqu28/IF3110_K03-06/internal/workflow"
-	"github.com/rabbitmq/amqp091-go"
 )
 
 func main() {
@@ -63,7 +61,12 @@ func run() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	shutdownTracing, err := observability.InitTracing(ctx, "dbmp-platform", os.Getenv("OTEL_TRACES_EXPORTER"), os.Stdout)
+
+	serviceName := "dbmp-platform"
+	if *mode == "worker" {
+		serviceName = "dbmp-worker"
+	}
+	shutdownTracing, err := observability.InitTracing(ctx, serviceName, os.Getenv("OTEL_TRACES_EXPORTER"), os.Stdout)
 	if err != nil {
 		return err
 	}
@@ -72,6 +75,7 @@ func run() error {
 		defer shutCancel()
 		_ = shutdownTracing(shutCtx)
 	}()
+
 	db, err := database.Open(ctx, dsn)
 	if err != nil {
 		return err
@@ -105,16 +109,11 @@ func run() error {
 	}
 	adminHandler := httpserver.NewAdminHandler(adminService, authHandler, pages)
 	databaseHandler := httpserver.NewDatabaseHandler(explorer.NewService(adminService, adminStore), authHandler, pages)
-	jobRoutes, closeJobs, err := webJobRoutes(db, authHandler, adminStore, adminService)
-	if err != nil {
-		return err
-	}
-	defer closeJobs()
 
 	workerCtx, cancelWorkers := context.WithCancel(context.Background())
 	defer cancelWorkers()
 
-	publisher, consumer, closeQueue, err := initQueue(workerCtx)
+	publisher, embeddedConsumer, closeQueue, err := initWebQueue()
 	if err != nil {
 		return err
 	}
@@ -126,45 +125,60 @@ func run() error {
 	historyStore := database.NewHistoryPostgresStore(db)
 	jobStore := database.NewJobPostgresStore(db)
 	submitStore := database.NewSubmitPostgresStore(db)
-	lockStore := database.NewLockPostgresStore(db, 30*time.Second)
 
-	targetExecutor := database.NewTargetExecutor(
-		adminStore,
-		database.WorkerTargetOptions(database.DefaultMigrationBatchTimeout),
-		migrationengine.ProgressSink(func(ctx context.Context, executionID string, progress domain.BatchProgress) error {
-			return jobStore.UpdateProgressByExecution(ctx, executionID, progress)
-		}),
-	)
-	engine := migrationengine.NewEngine(revisionStore, historyStore, targetExecutor, executionStore)
-	authorizer := workflow.NewExecutionAuthorizer(adminService, submitStore)
 	reviewService := workflow.NewReviewService(adminService, approvalStore, approvalStore, approvalStore)
 	submitService := workflow.NewSubmitService(adminService, revisionStore, adminStore, submitStore, publisher, jobStore)
 	queryService := workflow.NewQueryService(adminService, revisionStore, historyStore)
-	jobService := workflow.NewJobService(adminService, reviewService, approvalStore, submitService, jobStore)
+	jobService := workflow.NewJobService(adminService, reviewService, approvalStore, submitService, jobStore).
+		WithRevisions(revisionStore, adminStore).
+		WithDecisions(approvalStore).
+		WithExecutions(executionStore)
+	actionAdvisor := workflow.NewActionAdvisor(adminService, executionStore, submitStore)
 	workflowHandler := httpserver.NewWorkflowHandler(authHandler, queryService, jobService)
 
-	outboxRelay := workflow.NewOutboxRelay(jobStore, publisher, workflow.DefaultRelayInterval, workflow.DefaultRelayBatch)
-	workerRunner := worker.NewWorker(consumer, jobStore, lockStore, authorizer, engine, worker.Config{
-		FencedStore: func(owner string, token int64) worker.JobStateStore {
-			return jobStore.Fenced(owner, token)
-		},
-	})
+	go workflow.NewOutboxRelay(jobStore, publisher, workflow.DefaultRelayInterval, workflow.DefaultRelayBatch).Run(workerCtx)
 
-	go outboxRelay.Run(workerCtx)
-	go runJobSweeper(workerCtx, jobStore, 30*time.Second)
-	go func() {
-		if err := workerRunner.Run(workerCtx); err != nil && workerCtx.Err() == nil {
-			slog.Error("worker exited with error", slog.String("event", "worker.fatal"), slog.String("status", "error"), slog.String("error", err.Error()))
+	if embeddedConsumer != nil {
+		var embeddedWorker *worker.Worker
+		progress := func(ctx context.Context, executionID string, p domain.BatchProgress) error {
+			return embeddedWorker.ReportProgress(ctx, executionID, p)
 		}
-	}()
+		targetExecutor := database.NewTargetExecutor(adminStore, database.WorkerTargetOptions(database.DefaultMigrationBatchTimeout), progress)
+		engine := migrationengine.NewEngine(revisionStore, historyStore, targetExecutor)
+		embeddedWorker = worker.New(worker.Dependencies{
+			Consumer:   embeddedConsumer,
+			Jobs:       jobStore,
+			Authorizer: workflow.NewExecutionAuthorizer(adminService, submitStore),
+			Executor:   engine,
+			Locks:      database.NewLockPostgresStore(db, 30*time.Second),
+			Fence:      func(owner string, token int64) worker.JobStore { return jobStore.Fenced(owner, token) },
+		}, workerID(), slog.Default())
+		go worker.RunSweeper(workerCtx, jobStore, 0, slog.Default())
+		go func() {
+			if err := embeddedWorker.Run(workerCtx, 2); err != nil && workerCtx.Err() == nil {
+				slog.Error("embedded worker exited with error", slog.String("event", "worker.fatal"), slog.String("status", "error"), slog.String("error", err.Error()))
+			}
+		}()
+	}
 
 	addr := os.Getenv("HTTP_ADDR")
 	if addr == "" {
 		addr = ":8080"
 	}
 	server := &http.Server{
-		Addr:              addr,
-		Handler:           httpserver.NewApplicationRouterWithWorkflow(authHandler, adminHandler, databaseHandler, workflowHandler, static, db.PingContext, jobRoutes),
+		Addr: addr,
+		Handler: httpserver.NewApplicationRouterWithSPA(
+			authHandler,
+			adminHandler,
+			databaseHandler,
+			workflowHandler,
+			queryService,
+			jobService,
+			actionAdvisor,
+			static,
+			spa,
+			db.PingContext,
+		),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -176,9 +190,9 @@ func run() error {
 	go func() {
 		<-stop.Done()
 		cancelWorkers()
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = server.Shutdown(ctx)
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutCancel()
+		_ = server.Shutdown(shutCtx)
 	}()
 
 	slog.Info("server listening", slog.String("event", "server.start"), slog.String("addr", addr), slog.String("status", "ok"))
@@ -186,54 +200,4 @@ func run() error {
 		return err
 	}
 	return nil
-}
-
-func initQueue(ctx context.Context) (workflow.JobPublisher, worker.JobConsumer, func(), error) {
-	amqpURL := strings.TrimSpace(os.Getenv("AMQP_URL"))
-	if amqpURL == "" {
-		mem := queue.NewMemory()
-		return mem, mem, func() {}, nil
-	}
-	queueName := strings.TrimSpace(os.Getenv("AMQP_QUEUE"))
-	if queueName == "" {
-		queueName = "migration_jobs"
-	}
-	conn, err := amqp.Dial(amqpURL)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	pub, err := queue.NewRabbitPublisher(conn, queueName)
-	if err != nil {
-		_ = conn.Close()
-		return nil, nil, nil, err
-	}
-	con, err := queue.NewRabbitConsumer(ctx, conn, queueName, 1)
-	if err != nil {
-		_ = pub.Close()
-		_ = conn.Close()
-		return nil, nil, nil, err
-	}
-	cleanup := func() {
-		_ = con.Close()
-		_ = pub.Close()
-		_ = conn.Close()
-	}
-	return pub, con, cleanup, nil
-}
-
-func runJobSweeper(ctx context.Context, jobs *database.JobPostgresStore, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		if swept, err := jobs.SweepExpiredJobs(ctx); err != nil && ctx.Err() == nil {
-			slog.Error("sweep expired jobs failed", slog.String("event", "worker.sweep"), slog.String("status", "error"), slog.String("error", err.Error()))
-		} else if swept > 0 {
-			slog.Warn("swept expired worker jobs", slog.String("event", "worker.sweep"), slog.String("status", "ok"), slog.Int("swept", swept))
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
 }

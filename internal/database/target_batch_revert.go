@@ -8,6 +8,7 @@ import (
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 	"github.com/Minaqu28/IF3110_K03-06/internal/migrationengine"
+	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -126,20 +127,33 @@ func (e *TargetExecutor) runRevertBatch(ctx context.Context, conn *pgx.Conn, dow
 		return 0, err
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
-	tag, err := tx.Exec(ctx, downSQL, b.from, b.to)
+	ev := observability.SQLEvent{
+		Query:       downSQL,
+		Parameters:  []any{b.from, b.to},
+		ExecutionID: executionID,
+		Batch:       b.batchNo,
+	}
+	sqlCtx, span, start := observability.StartSQL(ctx, nil, ev)
+	tag, err := tx.Exec(sqlCtx, downSQL, b.from, b.to)
+	rows := tag.RowsAffected()
+	observability.EndSQL(sqlCtx, nil, span, start, ev, &rows, err)
 	if err != nil {
+		observability.LogTxOutcome(sqlCtx, nil, ev, false, err)
 		return 0, err
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := tx.Exec(sqlCtx, `
 		INSERT INTO public._dbmp_batch_checkpoints
 			(source_execution_id, batch_no, direction, execution_id, cursor_from, cursor_to, row_count)
-		VALUES ($1, $2, 'DOWN', $3, $4, $5, $6)`, source, b.batchNo, executionID, b.from, b.to, tag.RowsAffected()); err != nil {
+		VALUES ($1, $2, 'DOWN', $3, $4, $5, $6)`, source, b.batchNo, executionID, b.from, b.to, rows); err != nil {
+		observability.LogTxOutcome(sqlCtx, nil, ev, false, err)
 		return 0, err
 	}
-	if err := e.commitBatch(ctx, conn, tx); err != nil {
+	if err := e.commitBatch(sqlCtx, conn, tx); err != nil {
+		observability.LogTxOutcome(sqlCtx, nil, ev, true, err)
 		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	observability.LogTxOutcome(sqlCtx, nil, ev, true, nil)
+	return rows, nil
 }
 
 func (e *TargetExecutor) finishRevert(ctx context.Context, conn *pgx.Conn, req domain.ExecutionRequest, source string, result domain.ExecutionResult) (domain.ExecutionResult, error) {

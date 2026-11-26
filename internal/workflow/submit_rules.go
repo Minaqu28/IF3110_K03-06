@@ -105,10 +105,19 @@ func checkRequestShape(rev domain.MigrationRevision, req domain.ExecutionRequest
 
 func approvedFor(state SubmitState, req domain.ExecutionRequest) bool {
 	rev, review := state.Revision, state.Review
-	return rev.Status == domain.RevisionStatusApproved && rev.LockedAt != nil &&
-		review != nil && review.ID == req.ApprovalRequestID && review.Status == domain.ReviewStatusApproved &&
-		review.RevisionID == rev.ID && review.DefinitionHash == rev.DefinitionHash &&
-		rev.DefinitionHash == domain.ComputeDefinitionHash(rev)
+	if rev.Status != domain.RevisionStatusApproved || rev.LockedAt == nil ||
+		review == nil || review.ID != req.ApprovalRequestID || review.Status != domain.ReviewStatusApproved ||
+		review.RevisionID != rev.ID || review.DefinitionHash != rev.DefinitionHash ||
+		rev.DefinitionHash != domain.ComputeDefinitionHash(rev) {
+		return false
+	}
+	if review.Action != "" && review.Action != req.Action {
+		return false
+	}
+	if req.Action == domain.MigrationActionRollback && review.TargetExecutionID != nil && *review.TargetExecutionID != targetOf(req) {
+		return false
+	}
+	return true
 }
 
 func checkResume(state SubmitState, req domain.ExecutionRequest) error {

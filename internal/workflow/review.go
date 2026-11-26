@@ -22,6 +22,10 @@ type ReviewSubmitter interface {
 	SubmitForReview(ctx context.Context, databaseID, revisionID, requestedBy int64, approvers []RequiredApprover) (domain.ReviewRequest, error)
 }
 
+type ActionReviewSubmitter interface {
+	SubmitActionForReview(ctx context.Context, databaseID, revisionID, requestedBy int64, action domain.MigrationAction, targetExecutionID *string, approvers []RequiredApprover) (domain.ReviewRequest, error)
+}
+
 type ReviewService struct {
 	access    AccessChecker
 	grants    GrantReader
@@ -34,6 +38,22 @@ func NewReviewService(access AccessChecker, grants GrantReader, reviews ReviewSu
 }
 
 func (s *ReviewService) SubmitForReview(ctx context.Context, actor domain.User, databaseID, revisionID int64) (domain.ReviewRequest, error) {
+	return s.SubmitActionForReview(ctx, actor, databaseID, revisionID, domain.MigrationActionApply, nil)
+}
+
+func (s *ReviewService) SubmitActionForReview(ctx context.Context, actor domain.User, databaseID, revisionID int64, action domain.MigrationAction, targetExecutionID *string) (domain.ReviewRequest, error) {
+	if action == "" {
+		action = domain.MigrationActionApply
+	}
+	if !action.Valid() {
+		return domain.ReviewRequest{}, admin.ErrInvalidInput
+	}
+	if action == domain.MigrationActionRollback && (targetExecutionID == nil || *targetExecutionID == "") {
+		return domain.ReviewRequest{}, admin.ErrInvalidInput
+	}
+	if action != domain.MigrationActionRollback && targetExecutionID != nil {
+		return domain.ReviewRequest{}, admin.ErrInvalidInput
+	}
 	if err := s.requireEdit(ctx, actor, databaseID); err != nil {
 		return domain.ReviewRequest{}, err
 	}
@@ -44,6 +64,12 @@ func (s *ReviewService) SubmitForReview(ctx context.Context, actor domain.User, 
 	approvers, err := RequiredGroups(databaseID, grants)
 	if err != nil {
 		return domain.ReviewRequest{}, err
+	}
+	if actionSubmitter, ok := s.reviews.(ActionReviewSubmitter); ok {
+		return actionSubmitter.SubmitActionForReview(ctx, databaseID, revisionID, actor.ID, action, targetExecutionID, approvers)
+	}
+	if action != domain.MigrationActionApply {
+		return domain.ReviewRequest{}, admin.ErrInvalidInput
 	}
 	return s.reviews.SubmitForReview(ctx, databaseID, revisionID, actor.ID, approvers)
 }

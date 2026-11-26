@@ -69,17 +69,24 @@ func (s *ApprovalPostgresStore) DecideReview(ctx context.Context, reviewID, lead
 	return review, nil
 }
 
-const reviewColumns = `id, revision_id, definition_hash, status, requested_by, requested_at, resolved_at`
+const reviewColumns = `id, revision_id, action, target_execution_id::text, definition_hash, status, requested_by, requested_at, resolved_at`
 
 func scanReview(row rowScanner) (domain.ReviewRequest, error) {
 	var (
 		r           domain.ReviewRequest
+		action      string
+		target      sql.NullString
 		status      string
 		requestedBy sql.NullInt64
 		resolvedAt  sql.NullTime
 	)
-	if err := row.Scan(&r.ID, &r.RevisionID, &r.DefinitionHash, &status, &requestedBy, &r.RequestedAt, &resolvedAt); err != nil {
+	if err := row.Scan(&r.ID, &r.RevisionID, &action, &target, &r.DefinitionHash, &status, &requestedBy, &r.RequestedAt, &resolvedAt); err != nil {
 		return domain.ReviewRequest{}, err
+	}
+	r.Action = domain.MigrationAction(action)
+	if target.Valid {
+		t := target.String
+		r.TargetExecutionID = &t
 	}
 	r.Status = domain.ReviewStatus(status)
 	r.RequestedBy = requestedBy.Int64

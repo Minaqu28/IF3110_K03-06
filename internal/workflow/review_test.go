@@ -61,7 +61,7 @@ func TestSubmitForReview(t *testing.T) {
 		if err != nil || got.ID != 5 {
 			t.Fatalf("review = %+v, err = %v", got, err)
 		}
-		want := []submitCall{{7, 99, 42, []RequiredApprover{{1, 10}, {2, 20}}}}
+		want := []submitCall{{7, 99, 42, []RequiredApprover{{1, 10}, {2, 20}, {3, 30}}}}
 		if !reflect.DeepEqual(sub.calls, want) {
 			t.Fatalf("submitter calls = %+v, want %+v", sub.calls, want)
 		}
@@ -78,7 +78,8 @@ func TestSubmitForReview(t *testing.T) {
 		{"no access", fakeAccess{level: authorization.AccessNone}, fakeGrants{grants: editGrants}, admin.ErrForbidden},
 		{"access lookup fails", fakeAccess{err: admin.ErrNotFound}, fakeGrants{grants: editGrants}, admin.ErrNotFound},
 		{"grant lookup fails", fakeAccess{level: authorization.AccessViewEdit}, fakeGrants{err: boom}, boom},
-		{"nobody can approve", fakeAccess{level: authorization.AccessViewEdit}, fakeGrants{grants: editGrants[2:]}, ErrNoApprovers},
+		{"group missing leader", fakeAccess{level: authorization.AccessViewEdit}, fakeGrants{grants: []GroupGrant{{GroupID: 3, DatabaseID: 7, LeaderID: 0, Level: authorization.AccessViewOnly}}}, ErrGroupMissingLeader},
+		{"nobody can approve", fakeAccess{level: authorization.AccessViewEdit}, fakeGrants{grants: nil}, ErrNoApprovers},
 	}
 	for _, c := range refused {
 		t.Run(c.name, func(t *testing.T) {

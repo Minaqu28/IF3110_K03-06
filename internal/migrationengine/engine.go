@@ -1,11 +1,12 @@
+package migrationengine
+
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"fmt"
+	"log/slog"
 	"time"
 
-	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
 	"go.opentelemetry.io/otel/attribute"
@@ -35,20 +36,22 @@ type Engine struct {
 	now       func() time.Time
 }
 
-func NewEngine(revisions RevisionStore, history HistoryStore, target TargetExecutor, finisher ExecutionFinisher) *Engine {
+func NewEngine(revisions RevisionStore, history HistoryStore, target TargetExecutor) *Engine {
 	return &Engine{
 		revisions: revisions,
 		history:   history,
 		target:    target,
-		finisher:  finisher,
 		now:       time.Now,
 	}
 }
 
+func (e *Engine) WithFinisher(finisher ExecutionFinisher) *Engine {
+	e.finisher = finisher
+	return e
+}
+
 func (e *Engine) Execute(ctx context.Context, req domain.ExecutionRequest) (domain.ExecutionResult, error) {
-	if req.ExecutionID == "" || !req.Action.Valid() {
-		return domain.ExecutionResult{}, admin.ErrInvalidInput
-	}
+	started := e.now()
 	ctx = observability.WithDatabase(observability.WithActor(ctx, req.ActorID, ""), req.DatabaseID, "")
 	ctx, span := observability.Tracer().Start(ctx, "migration.execute",
 		trace.WithAttributes(
@@ -70,16 +73,19 @@ func (e *Engine) Execute(ctx context.Context, req domain.ExecutionRequest) (doma
 		return domain.ExecutionResult{}, err
 	}
 
-	sqlSnapshot := rev.UpSQL
-	if req.Action == domain.MigrationActionRollback {
-		sqlSnapshot = rev.DownSQL
+	var (
+		result domain.ExecutionResult
+		runErr error
+	)
+	if refusal := checkRevision(rev); refusal.ErrorCode != "" {
+		result = e.finish(refusal, req, started)
+	} else {
+		result, runErr = e.target.Execute(ctx, req, rev)
 	}
 
-	started := e.now()
-	res, execErr := e.target.Execute(ctx, req, rev)
-	finished := e.now()
+	attempt := e.attemptFor(req, rev, result, runErr, started)
+	logExecutionAttempt(ctx, span, req, rev, attempt, result, runErr)
 
-	attempt := buildAttempt(req.ExecutionID, sqlSnapshot, started, finished, res, execErr)
 	if e.history != nil {
 		if hErr := e.history.AppendAttempt(context.WithoutCancel(ctx), attempt); hErr != nil {
 			slog.ErrorContext(ctx, "append execution attempt failed",
@@ -89,12 +95,13 @@ func (e *Engine) Execute(ctx context.Context, req domain.ExecutionRequest) (doma
 				slog.Int64("migration_id", req.MigrationID),
 				slog.String("error", hErr.Error()),
 			)
+			return result, errors.Join(runErr, fmt.Errorf("%w: %w", ErrAttemptNotRecorded, hErr))
 		}
 	}
 
 	if e.finisher != nil {
-		if execErr == nil {
-			if fErr := e.finisher.FinishExecution(context.WithoutCancel(ctx), res); fErr != nil {
+		if runErr == nil {
+			if fErr := e.finisher.FinishExecution(context.WithoutCancel(ctx), result); fErr != nil {
 				slog.ErrorContext(ctx, "finish execution record failed",
 					slog.String("event", "migration.finish"),
 					slog.String("status", "error"),
@@ -102,12 +109,13 @@ func (e *Engine) Execute(ctx context.Context, req domain.ExecutionRequest) (doma
 					slog.String("error", fErr.Error()),
 				)
 			}
-		} else if errors.Is(execErr, ErrCommitUncertain) {
+		} else if errors.Is(runErr, ErrCommitUncertain) {
+			finished := e.now()
 			uncertain := domain.ExecutionResult{
 				ExecutionID:  req.ExecutionID,
 				Status:       domain.ExecutionStatusUnknown,
-				ErrorCode:    "COMMIT_UNCERTAIN",
-				ErrorMessage: execErr.Error(),
+				ErrorCode:    ErrorCodeCommitUncertain,
+				ErrorMessage: runErr.Error(),
 				StartedAt:    started,
 				FinishedAt:   &finished,
 			}
@@ -122,45 +130,14 @@ func (e *Engine) Execute(ctx context.Context, req domain.ExecutionRequest) (doma
 		}
 	}
 
-	logExecutionAttempt(ctx, span, req, rev, attempt, res, execErr)
-	return res, execErr
-}
-
-func buildAttempt(executionID, sqlSnapshot string, started, finished time.Time, res domain.ExecutionResult, execErr error) domain.ExecutionAttempt {
-	attempt := domain.ExecutionAttempt{
-		ExecutionID:  executionID,
-		Status:       res.Status,
-		SQLSnapshot:  sqlSnapshot,
-		ErrorCode:    res.ErrorCode,
-		ErrorMessage: res.ErrorMessage,
-		StartedAt:    res.StartedAt,
-		FinishedAt:   res.FinishedAt,
-	}
-	if attempt.StartedAt.IsZero() {
-		attempt.StartedAt = started
-	}
-	if attempt.FinishedAt == nil {
-		attempt.FinishedAt = &finished
-	}
-	if execErr != nil {
-		if errors.Is(execErr, ErrCommitUncertain) {
-			attempt.Status = domain.ExecutionStatusUnknown
-			attempt.ErrorCode = "COMMIT_UNCERTAIN"
-		} else if attempt.Status == "" {
-			attempt.Status = domain.ExecutionStatusFailed
-		}
-		if attempt.ErrorMessage == "" {
-			attempt.ErrorMessage = execErr.Error()
-		}
-	}
-	if attempt.Status == "" {
-		attempt.Status = domain.ExecutionStatusFailed
-	}
-	return attempt
+	return result, runErr
 }
 
 func logExecutionAttempt(ctx context.Context, span trace.Span, req domain.ExecutionRequest, rev domain.MigrationRevision, attempt domain.ExecutionAttempt, res domain.ExecutionResult, execErr error) {
-	durationMs := float64(attempt.FinishedAt.Sub(attempt.StartedAt).Microseconds()) / 1000.0
+	var durationMs float64
+	if attempt.FinishedAt != nil && !attempt.StartedAt.IsZero() {
+		durationMs = float64(attempt.FinishedAt.Sub(attempt.StartedAt).Microseconds()) / 1000.0
+	}
 	level := slog.LevelInfo
 	if execErr != nil || attempt.Status != domain.ExecutionStatusSucceeded {
 		level = slog.LevelError
@@ -188,6 +165,7 @@ func logExecutionAttempt(ctx context.Context, span trace.Span, req domain.Execut
 		slog.String("action", string(req.Action)),
 		slog.String("mode", string(req.Mode)),
 		slog.String("status", string(attempt.Status)),
+		slog.String("query", observability.MaskString(attempt.SQLSnapshot)),
 		slog.Int("applied_batches", res.AppliedBatches),
 		slog.Int64("affected_rows", res.AffectedRows),
 		slog.Float64("duration_ms", durationMs),

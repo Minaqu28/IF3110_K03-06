@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -24,20 +25,109 @@ func NewAuthenticatedRouter(authenticationHandler *AuthenticationHandler, static
 	return NewApplicationRouter(authenticationHandler, nil, nil, static, health)
 }
 
-func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, static fs.FS, health func(context.Context) error) http.Handler {
-	return NewApplicationRouterWithWorkflow(authenticationHandler, adminHandler, databaseHandler, nil, static, health)
+func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, static fs.FS, health func(context.Context) error, routes ...func(*http.ServeMux)) http.Handler {
+	return NewApplicationRouterWithSPA(authenticationHandler, adminHandler, databaseHandler, nil, nil, nil, nil, static, nil, health, routes...)
 }
 
-func NewApplicationRouterWithWorkflow(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, workflowHandler *WorkflowHandler, static fs.FS, health func(context.Context) error) http.Handler {
+func NewApplicationRouterWithWorkflow(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, workflowHandler *WorkflowHandler, static fs.FS, health func(context.Context) error, routes ...func(*http.ServeMux)) http.Handler {
+	return NewApplicationRouterWithSPA(authenticationHandler, adminHandler, databaseHandler, workflowHandler, nil, nil, nil, static, nil, health, routes...)
+}
+
+// NewApplicationRouterWithSPA wires the JSON API, workflow endpoints, optional custom route registrars, and embedded SPA assets.
+func NewApplicationRouterWithSPA(
+	authenticationHandler *AuthenticationHandler,
+	adminHandler *AdminHandler,
+	databaseHandler *DatabaseHandler,
+	workflowHandler *WorkflowHandler,
+	migrations MigrationQueryService,
+	workflow WorkflowJobService,
+	actions JobActionAdvisor,
+	static, spa fs.FS,
+	health func(context.Context) error,
+	routes ...func(*http.ServeMux),
+) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler(health))
-	mux.HandleFunc("GET /{$}", authenticationHandler.Home)
-	mux.HandleFunc("GET /login", authenticationHandler.ShowLogin)
+
+	// SPA JSON API (/api/v1/...)
+	mux.HandleFunc("GET /api/v1/auth/login-csrf", authenticationHandler.apiLoginCSRF)
+	mux.HandleFunc("POST /api/v1/auth/login", authenticationHandler.apiLogin)
+	mux.HandleFunc("GET /api/v1/auth/session", authenticationHandler.apiCurrentSession)
+	mux.HandleFunc("POST /api/v1/auth/logout", authenticationHandler.apiLogout)
+	if adminHandler != nil {
+		mux.HandleFunc("GET /api/v1/admin", adminHandler.apiAdmin)
+		mux.HandleFunc("POST /api/v1/admin/actions", adminHandler.apiAdminAction)
+		mux.HandleFunc("GET /api/v1/databases", adminHandler.apiDatabases)
+	}
+	if databaseHandler != nil {
+		mux.HandleFunc("GET /api/v1/databases/{id}", databaseHandler.apiDatabase)
+		mux.HandleFunc("POST /api/v1/databases/{id}/query", databaseHandler.apiQuery)
+		mux.HandleFunc("POST /api/v1/databases/{id}/explain", databaseHandler.apiExplain)
+	}
+	if spa != nil || migrations != nil || workflow != nil {
+		services := &apiServices{auth: authenticationHandler, migrations: migrations, workflow: workflow, actions: actions}
+		mux.HandleFunc("GET /api/v1/databases/{id}/revisions", services.revisions)
+		mux.HandleFunc("POST /api/v1/databases/{id}/revisions", services.createRevision)
+		mux.HandleFunc("POST /api/v1/databases/{id}/revisions/{revisionId}/review", services.submitReview)
+		mux.HandleFunc("GET /api/v1/databases/{id}/history", services.history)
+		mux.HandleFunc("GET /api/v1/databases/{id}/reviews", services.reviews)
+		mux.HandleFunc("GET /api/v1/databases/{id}/reviews/{reviewId}/decisions", services.reviewDecisions)
+		mux.HandleFunc("POST /api/v1/reviews/{id}/decision", services.decide)
+		mux.HandleFunc("POST /api/v1/jobs", services.submit)
+		if len(routes) == 0 {
+			mux.HandleFunc("POST /api/v1/databases/{id}/executions", services.submitForDatabase)
+			mux.HandleFunc("GET /api/v1/jobs/{id}", services.job)
+		}
+	}
+	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, _ *http.Request) {
+		jsonError(w, 404, "NOT_FOUND", "Endpoint tidak ditemukan.")
+	})
+
+	// Workflow JSON API (/api/...)
+	if workflowHandler != nil {
+		mux.HandleFunc("GET /api/databases/{id}/revisions", workflowHandler.ListRevisions)
+		mux.HandleFunc("GET /api/databases/{id}/history", workflowHandler.ListHistory)
+		mux.HandleFunc("GET /api/databases/{id}/reviews", workflowHandler.ListReviews)
+		mux.HandleFunc("POST /api/reviews/{reviewId}/decide", workflowHandler.DecideApproval)
+		mux.HandleFunc("POST /api/databases/{id}/executions", workflowHandler.SubmitExecution)
+		mux.HandleFunc("GET /api/jobs/{jobId}", workflowHandler.GetJob)
+	}
+
+	// Extra route registrars (e.g. standalone JobAPI routes in tests or dedicated integrations)
+	for _, register := range routes {
+		if register != nil {
+			register(mux)
+		}
+	}
+
+	// Embedded SPA or legacy SSR pages
+	var spaPage http.Handler
+	if spa != nil {
+		spaPage = spaHandler(spa)
+		mux.Handle("/app/", http.StripPrefix("/app/", http.FileServer(http.FS(spa))))
+		mux.Handle("/", spaPage)
+	} else {
+		spaPage = http.HandlerFunc(authenticationHandler.Home)
+	}
+	mux.Handle("GET /{$}", spaPage)
+	if spa == nil {
+		mux.HandleFunc("GET /login", authenticationHandler.ShowLogin)
+	} else {
+		mux.Handle("GET /login", spaPage)
+	}
 	mux.HandleFunc("POST /login", authenticationHandler.Login)
 	mux.HandleFunc("POST /logout", authenticationHandler.Logout)
-	mux.HandleFunc("GET /dashboard", authenticationHandler.ShowDashboard)
+	if spa == nil {
+		mux.HandleFunc("GET /dashboard", authenticationHandler.ShowDashboard)
+	} else {
+		mux.Handle("GET /dashboard", spaPage)
+	}
 	if adminHandler != nil {
-		mux.HandleFunc("GET /admin", adminHandler.Show)
+		if spa == nil {
+			mux.HandleFunc("GET /admin", adminHandler.Show)
+		} else {
+			mux.Handle("GET /admin", spaPage)
+		}
 		mux.HandleFunc("POST /admin/users", adminHandler.CreateUser)
 		mux.HandleFunc("POST /admin/users/status", adminHandler.SetUserActive)
 		mux.HandleFunc("POST /admin/users/update", adminHandler.UpdateUser)
@@ -52,10 +142,18 @@ func NewApplicationRouterWithWorkflow(authenticationHandler *AuthenticationHandl
 		mux.HandleFunc("POST /admin/connections/update", adminHandler.UpdateConnection)
 		mux.HandleFunc("POST /admin/connections/delete", adminHandler.DeleteConnection)
 		mux.HandleFunc("POST /admin/grants", adminHandler.Grant)
-		mux.HandleFunc("GET /databases", adminHandler.ListDatabases)
+		if spa == nil {
+			mux.HandleFunc("GET /databases", adminHandler.ListDatabases)
+		} else {
+			mux.Handle("GET /databases", spaPage)
+		}
 	}
 	if databaseHandler != nil {
-		mux.HandleFunc("GET /databases/{id}", databaseHandler.Show)
+		if spa == nil {
+			mux.HandleFunc("GET /databases/{id}", databaseHandler.Show)
+		} else {
+			mux.Handle("GET /databases/{id}", spaPage)
+		}
 		mux.HandleFunc("POST /databases/{id}/query", databaseHandler.Execute)
 		mux.HandleFunc("POST /databases/{id}/explain", databaseHandler.Explain)
 		mux.HandleFunc("POST /databases/{id}/migrations/preview", databaseHandler.PreviewMigration)
@@ -63,20 +161,39 @@ func NewApplicationRouterWithWorkflow(authenticationHandler *AuthenticationHandl
 		mux.HandleFunc("POST /databases/{id}/migrations/{version}/update", databaseHandler.UpdateMigration)
 		mux.HandleFunc("POST /databases/{id}/migrations/{version}/execute", databaseHandler.ExecuteMigration)
 	}
-	if workflowHandler != nil {
-		mux.HandleFunc("GET /api/databases/{id}/revisions", workflowHandler.ListRevisions)
-		mux.HandleFunc("GET /api/databases/{id}/history", workflowHandler.ListHistory)
-		mux.HandleFunc("GET /api/databases/{id}/reviews", workflowHandler.ListReviews)
-		mux.HandleFunc("POST /api/reviews/{reviewId}/decide", workflowHandler.DecideApproval)
-		mux.HandleFunc("POST /api/databases/{id}/executions", workflowHandler.SubmitExecution)
-		mux.HandleFunc("GET /api/jobs/{jobId}", workflowHandler.GetJob)
-	for _, register := range routes {
-		register(mux)
-	}
 	if static != nil {
 		mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
 	}
 	return observabilityMiddleware(securityHeaders(mux))
+}
+
+func spaHandler(files fs.FS) http.Handler {
+	assets := http.FileServer(http.FS(files))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if name != "" {
+			if info, err := fs.Stat(files, name); err == nil && !info.IsDir() {
+				assets.ServeHTTP(w, r)
+				return
+			}
+		}
+		if strings.Contains(name, ".") {
+			http.NotFound(w, r)
+			return
+		}
+		index, err := fs.ReadFile(files, "index.html")
+		if err != nil {
+			http.Error(w, "SPA unavailable", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(index)
+	})
 }
 
 func healthHandler(health func(context.Context) error) http.HandlerFunc {

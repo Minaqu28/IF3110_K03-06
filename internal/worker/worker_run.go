@@ -8,6 +8,10 @@ import (
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
+	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const DefaultLockWait = 5 * time.Second
@@ -21,21 +25,56 @@ const (
 
 func (w *Worker) handle(ctx context.Context, d JobDelivery) {
 	msg := d.Message()
+	ctx = observability.ExtractTraceContext(ctx, msg.TraceContext)
+	ctx = observability.WithDatabase(observability.WithActor(ctx, msg.ActorID, ""), msg.DatabaseID, "")
+	ctx, span := observability.Tracer().Start(ctx, "worker.process",
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(
+			attribute.String("job.id", msg.JobID),
+			attribute.String("execution.id", msg.ExecutionID),
+			attribute.Int64("database.id", msg.DatabaseID),
+			attribute.Int64("migration.id", msg.MigrationID),
+			attribute.Int64("revision.id", msg.RevisionID),
+			attribute.String("migration.action", string(msg.Action)),
+			attribute.String("migration.mode", string(msg.Mode)),
+			attribute.Bool("messaging.redelivered", d.Redelivered()),
+		),
+	)
+	defer span.End()
+
 	log := deliveryLog(w.log, msg)
 	job, ok := w.admit(ctx, log, d)
 	if !ok {
 		return
 	}
-	held, acquired, err := w.acquire(ctx, log, msg.DatabaseID, msg.ExecutionID)
+	lockCtx, lockSpan := observability.Tracer().Start(ctx, "worker.lock",
+		trace.WithAttributes(
+			attribute.Int64("database.id", msg.DatabaseID),
+			attribute.String("execution.id", msg.ExecutionID),
+			attribute.String("worker.id", w.id),
+		),
+	)
+	held, acquired, err := w.acquire(lockCtx, log, msg.DatabaseID, msg.ExecutionID)
 	if err != nil {
-		log.Error("could not take the database lock; requeueing", "error", err)
+		lockSpan.RecordError(err)
+		lockSpan.SetStatus(codes.Error, err.Error())
+		lockSpan.End()
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		log.ErrorContext(ctx, "could not take the database lock; requeueing", "event", "worker.lock", "status", "error", "error", err)
 		w.settle(log, "requeue", d.Requeue)
 		return
 	}
+	lockSpan.SetAttributes(attribute.Bool("lock.acquired", acquired))
 	if !acquired {
+		lockSpan.End()
 		w.busy(ctx, log, d, job)
 		return
 	}
+	lockSpan.SetAttributes(attribute.Int64("lock.fencing_token", held.token))
+	lockSpan.SetStatus(codes.Ok, "")
+	lockSpan.End()
+
 	defer held.release(ctx)
 	jobs := w.deps.Fence(w.id, held.token)
 	runCtx := held.keepAlive(ctx, w.heartbeat)
@@ -43,11 +82,15 @@ func (w *Worker) handle(ctx context.Context, d JobDelivery) {
 	if err := w.deps.Authorizer.AuthorizeExecution(runCtx, req); err != nil {
 		code, refused := refusalCode(err)
 		if !refused {
-			log.Error("could not authorize the job; requeueing", "error", err)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			log.ErrorContext(runCtx, "could not authorize the job; requeueing", "event", "worker.authorize", "status", "error", "error", err)
 			w.settle(log, "requeue", d.Requeue)
 			return
 		}
-		log.Warn("job refused at run time", "error_code", code, "error", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, code)
+		log.WarnContext(runCtx, "job refused at run time", "event", "worker.authorize", "status", "refused", "error_code", code, "error", err)
 		job.Status, job.ErrorCode, job.ErrorMessage = domain.JobStatusFailed, code, err.Error()
 		w.saveThenAck(ctx, log, d, jobs, job)
 		return
@@ -55,18 +98,30 @@ func (w *Worker) handle(ctx context.Context, d JobDelivery) {
 	job.Status, job.AttemptCount = domain.JobStatusRunning, job.AttemptCount+1
 	job.ErrorCode, job.ErrorMessage = "", ""
 	if err := jobs.SaveJob(runCtx, job); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		w.unsaved(log, d, err)
 		return
 	}
-	log.Info("job started", "attempt", job.AttemptCount, "action", msg.Action, "mode", msg.Mode, "redelivered", d.Redelivered())
+	log.InfoContext(runCtx, "job started", "event", "worker.start", "status", "running", "attempt", job.AttemptCount, "action", msg.Action, "mode", msg.Mode, "redelivered", d.Redelivered())
 	run := w.active.track(msg.ExecutionID, job, jobs)
 	result, err := w.deps.Executor.Execute(runCtx, req)
 	w.active.untrack(msg.ExecutionID, run)
 	job = run.latest()
 	if cause := context.Cause(runCtx); errors.Is(cause, ErrLockLost) {
-		log.Error("the run lost its database lock", "error", err)
+		span.RecordError(cause)
+		log.ErrorContext(ctx, "the run lost its database lock", "event", "worker.lock_lost", "status", "error", "error", err)
 	}
-	w.saveThenAck(ctx, log, d, jobs, outcome(job, msg, result, err))
+	finalJob := outcome(job, msg, result, err)
+	if finalJob.Status == domain.JobStatusSucceeded {
+		span.SetStatus(codes.Ok, "")
+	} else {
+		if err != nil {
+			span.RecordError(err)
+		}
+		span.SetStatus(codes.Error, string(finalJob.Status))
+	}
+	w.saveThenAck(ctx, log, d, jobs, finalJob)
 }
 
 func (w *Worker) busy(ctx context.Context, log *slog.Logger, d JobDelivery, job domain.Job) {

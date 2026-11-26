@@ -44,11 +44,25 @@ func createReviewTx(ctx context.Context, tx *sql.Tx, review domain.ReviewRequest
 	if !locked || hash != review.DefinitionHash {
 		return domain.ReviewRequest{}, admin.ErrConflict
 	}
-	created := domain.ReviewRequest{RevisionID: review.RevisionID, DefinitionHash: hash, Status: domain.ReviewStatusPending, RequestedBy: review.RequestedBy}
+	action := review.Action
+	if action == "" {
+		action = domain.MigrationActionApply
+	}
+	if !action.Valid() {
+		return domain.ReviewRequest{}, admin.ErrInvalidInput
+	}
+	created := domain.ReviewRequest{
+		RevisionID:        review.RevisionID,
+		Action:            action,
+		TargetExecutionID: review.TargetExecutionID,
+		DefinitionHash:    hash,
+		Status:            domain.ReviewStatusPending,
+		RequestedBy:       review.RequestedBy,
+	}
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO review_requests (revision_id, definition_hash, requested_by)
-		VALUES ($1, $2, $3) RETURNING id, requested_at`,
-		review.RevisionID, hash, sql.NullInt64{Int64: review.RequestedBy, Valid: review.RequestedBy > 0}).
+		INSERT INTO review_requests (revision_id, action, target_execution_id, definition_hash, requested_by)
+		VALUES ($1, $2, $3, $4, $5) RETURNING id, requested_at`,
+		review.RevisionID, string(action), review.TargetExecutionID, hash, sql.NullInt64{Int64: review.RequestedBy, Valid: review.RequestedBy > 0}).
 		Scan(&created.ID, &created.RequestedAt)
 	if err != nil {
 		return domain.ReviewRequest{}, adminError(err)
@@ -106,7 +120,7 @@ func scanDecision(row rowScanner) (domain.ApprovalDecision, error) {
 
 func (s *ApprovalPostgresStore) ListReviewRequests(ctx context.Context, databaseID int64) ([]domain.ReviewRequest, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT q.id, q.revision_id, q.definition_hash, q.status, q.requested_by, q.requested_at, q.resolved_at
+		SELECT q.id, q.revision_id, q.action, q.target_execution_id::text, q.definition_hash, q.status, q.requested_by, q.requested_at, q.resolved_at
 		FROM review_requests q
 		JOIN migration_revisions r ON r.id = q.revision_id
 		WHERE r.database_id = $1

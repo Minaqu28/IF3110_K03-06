@@ -7,6 +7,7 @@ import (
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 	"github.com/Minaqu28/IF3110_K03-06/internal/migrationengine"
+	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -54,21 +55,34 @@ func (e *TargetExecutor) runBatch(ctx context.Context, conn *pgx.Conn, b batchSp
 			return batchOutcome{}, err
 		}
 	}
-	tag, err := tx.Exec(ctx, b.sql, b.from, hi.Int64)
+	ev := observability.SQLEvent{
+		Query:       b.sql,
+		Parameters:  []any{b.from, hi.Int64},
+		ExecutionID: b.executionID,
+		Batch:       b.batchNo,
+	}
+	sqlCtx, span, start := observability.StartSQL(ctx, nil, ev)
+	tag, err := tx.Exec(sqlCtx, b.sql, b.from, hi.Int64)
+	rows := tag.RowsAffected()
+	observability.EndSQL(sqlCtx, nil, span, start, ev, &rows, err)
 	if err != nil {
+		observability.LogTxOutcome(sqlCtx, nil, ev, false, err)
 		return batchOutcome{}, err
 	}
-	if _, err := tx.Exec(ctx, `
+	if _, err := tx.Exec(sqlCtx, `
 		INSERT INTO public._dbmp_batch_checkpoints
 			(source_execution_id, batch_no, direction, execution_id, cursor_from, cursor_to, row_count)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		b.sourceID, b.batchNo, string(b.direction), b.executionID, b.from, hi.Int64, tag.RowsAffected()); err != nil {
+		b.sourceID, b.batchNo, string(b.direction), b.executionID, b.from, hi.Int64, rows); err != nil {
+		observability.LogTxOutcome(sqlCtx, nil, ev, false, err)
 		return batchOutcome{}, err
 	}
-	if err := e.commitBatch(ctx, conn, tx); err != nil {
+	if err := e.commitBatch(sqlCtx, conn, tx); err != nil {
+		observability.LogTxOutcome(sqlCtx, nil, ev, true, err)
 		return batchOutcome{}, err
 	}
-	return batchOutcome{to: hi.Int64, rows: tag.RowsAffected()}, nil
+	observability.LogTxOutcome(sqlCtx, nil, ev, true, nil)
+	return batchOutcome{to: hi.Int64, rows: rows}, nil
 }
 
 func (e *TargetExecutor) commitBatch(ctx context.Context, conn *pgx.Conn, tx pgx.Tx) error {

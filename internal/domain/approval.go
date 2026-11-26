@@ -21,13 +21,15 @@ const (
 )
 
 type ReviewRequest struct {
-	ID             int64        `json:"id"`
-	RevisionID     int64        `json:"revision_id"`
-	DefinitionHash string       `json:"definition_hash"`
-	Status         ReviewStatus `json:"status"`
-	RequestedBy    int64        `json:"requested_by"`
-	RequestedAt    time.Time    `json:"requested_at"`
-	ResolvedAt     *time.Time   `json:"resolved_at,omitempty"`
+	ID                int64           `json:"id"`
+	RevisionID        int64           `json:"revision_id"`
+	Action            MigrationAction `json:"action,omitempty"`
+	TargetExecutionID *string         `json:"target_execution_id,omitempty"`
+	DefinitionHash    string          `json:"definition_hash"`
+	Status            ReviewStatus    `json:"status"`
+	RequestedBy       int64           `json:"requested_by"`
+	RequestedAt       time.Time       `json:"requested_at"`
+	ResolvedAt        *time.Time      `json:"resolved_at,omitempty"`
 }
 
 type ApprovalDecision struct {

@@ -51,7 +51,7 @@ func TestWorkflowHandlerEndpoints(t *testing.T) {
 
 	// GET history with hide_rollback=true
 	req := httptest.NewRequest(http.MethodGet, "/api/databases/4/history?hide_rollback=true", nil)
-	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "valid"})
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: "valid"})
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !gotHideRollback {
@@ -60,7 +60,7 @@ func TestWorkflowHandlerEndpoints(t *testing.T) {
 
 	// POST execution requires CSRF and returns 202
 	req = httptest.NewRequest(http.MethodPost, "/api/databases/4/executions", strings.NewReader(`{"migration_id":1,"revision_id":1,"approval_request_id":3,"action":"APPLY","mode":"NORMAL"}`))
-	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "valid"})
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: "valid"})
 	req.Header.Set("X-CSRF-Token", "csrf-ok")
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -74,7 +74,7 @@ func TestWorkflowHandlerEndpoints(t *testing.T) {
 
 	// POST decide without CSRF returns 403
 	req = httptest.NewRequest(http.MethodPost, "/api/reviews/3/decide", strings.NewReader(`{"status":"APPROVED"}`))
-	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "valid"})
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: "valid"})
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -86,7 +86,7 @@ func TestWorkflowHandlerEndpoints(t *testing.T) {
 		return domain.Job{}, admin.ErrNotFound
 	}
 	req = httptest.NewRequest(http.MethodGet, "/api/jobs/missing", nil)
-	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "valid"})
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: "valid"})
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {

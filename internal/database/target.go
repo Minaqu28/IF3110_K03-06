@@ -46,25 +46,7 @@ func (s *AdminPostgresStore) OpenTarget(ctx context.Context, dbID int64, readOnl
 	if err != nil {
 		return nil, err
 	}
-	password, err := s.DecryptPassword(encrypted)
-	if err != nil {
-		return nil, &explorer.ConnectError{Reason: "kredensial tersimpan tidak valid.", Err: err}
-	}
-	config, err := pgx.ParseConfig(TargetDSN(c, password))
-	if err != nil {
-		return nil, &explorer.ConnectError{Reason: "konfigurasi koneksi database tidak valid.", Err: err}
-	}
-	config.ConnectTimeout = targetConnectTimeout
-	config.RuntimeParams["application_name"] = "if3110-explorer"
-	config.RuntimeParams["statement_timeout"] = targetStatementTimeout
-	if readOnly {
-		config.RuntimeParams["default_transaction_read_only"] = "on"
-	}
-	conn, err := pgx.ConnectConfig(ctx, config)
-	if err != nil {
-		return nil, describeConnectError(err)
-	}
-	return &pgTarget{conn: conn, readOnly: readOnly, dbID: c.ID, dbName: c.Name}, nil
+	return target, nil
 }
 
 func describeConnectError(err error) error {
@@ -139,10 +121,14 @@ func (t *pgTarget) Schemas(ctx context.Context) ([]string, error) {
 
 func (t *pgTarget) TablesInSchema(ctx context.Context, schema string) ([]explorer.Table, error) {
 	t.resetTx(ctx)
-	rows, err := t.conn.Query(ctx, `
+	const listQuery = `
 		SELECT table_name, table_type FROM information_schema.tables
-		WHERE table_schema = $1 ORDER BY table_name`, schema)
+		WHERE table_schema = $1 ORDER BY table_name`
+	ev := t.sqlEvent(listQuery, true, schema)
+	qCtx, span, start := observability.StartSQL(ctx, nil, ev)
+	rows, err := t.conn.Query(qCtx, listQuery, schema)
 	if err != nil {
+		observability.EndSQL(qCtx, nil, span, start, ev, nil, err)
 		return nil, err
 	}
 	tables, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (explorer.Table, error) {
@@ -150,13 +136,23 @@ func (t *pgTarget) TablesInSchema(ctx context.Context, schema string) ([]explore
 		err := row.Scan(&table.Name, &table.Type)
 		return table, err
 	})
+	rowCount := int64(len(tables))
+	observability.EndSQL(qCtx, nil, span, start, ev, &rowCount, err)
 	if err != nil {
 		return nil, err
 	}
 	for i := range tables {
 		ident := pgx.Identifier{schema, tables[i].Name}.Sanitize()
-		if err := t.conn.QueryRow(ctx, `SELECT count(*) FROM `+ident).Scan(&tables[i].Rows); err != nil {
+		countQuery := `SELECT count(*) FROM ` + ident
+		cEv := t.sqlEvent(countQuery, true)
+		cCtx, cSpan, cStart := observability.StartSQL(ctx, nil, cEv)
+		cErr := t.conn.QueryRow(cCtx, countQuery).Scan(&tables[i].Rows)
+		one := int64(1)
+		if cErr != nil {
 			tables[i].Rows = -1
+			observability.EndSQL(cCtx, nil, cSpan, cStart, cEv, nil, cErr)
+		} else {
+			observability.EndSQL(cCtx, nil, cSpan, cStart, cEv, &one, nil)
 		}
 	}
 	return tables, nil
@@ -184,7 +180,7 @@ func (t *pgTarget) TableDetails(ctx context.Context, schema, table string) (expl
 		return explorer.TableDetails{}, explorer.ErrTableNotFound
 	}
 	var details explorer.TableDetails
-	rows, err := t.conn.Query(ctx, `
+	const colQuery = `
 		SELECT a.attname, format_type(a.atttypid, a.atttypmod), NOT a.attnotnull,
 		       COALESCE(pg_get_expr(d.adbin, d.adrelid), '')
 		FROM pg_attribute a
@@ -192,8 +188,12 @@ func (t *pgTarget) TableDetails(ctx context.Context, schema, table string) (expl
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		LEFT JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
 		WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped
-		ORDER BY a.attnum`, schema, table)
+		ORDER BY a.attnum`
+	colEv := t.sqlEvent(colQuery, true, schema, table)
+	colCtx, colSpan, colStart := observability.StartSQL(ctx, nil, colEv)
+	rows, err := t.conn.Query(colCtx, colQuery, schema, table)
 	if err != nil {
+		observability.EndSQL(colCtx, nil, colSpan, colStart, colEv, nil, err)
 		return details, err
 	}
 	details.Columns, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (explorer.Column, error) {
@@ -201,17 +201,23 @@ func (t *pgTarget) TableDetails(ctx context.Context, schema, table string) (expl
 		err := row.Scan(&column.Name, &column.Type, &column.Nullable, &column.Default)
 		return column, err
 	})
+	colCount := int64(len(details.Columns))
+	observability.EndSQL(colCtx, nil, colSpan, colStart, colEv, &colCount, err)
 	if err != nil {
 		return details, err
 	}
-	rows, err = t.conn.Query(ctx, `
+	const conQuery = `
 		SELECT con.conname, con.contype::text, pg_get_constraintdef(con.oid)
 		FROM pg_constraint con
 		JOIN pg_class c ON c.oid = con.conrelid
 		JOIN pg_namespace n ON n.oid = c.relnamespace
 		WHERE n.nspname = $1 AND c.relname = $2
-		ORDER BY con.conname`, schema, table)
+		ORDER BY con.conname`
+	conEv := t.sqlEvent(conQuery, true, schema, table)
+	conCtx, conSpan, conStart := observability.StartSQL(ctx, nil, conEv)
+	rows, err = t.conn.Query(conCtx, conQuery, schema, table)
 	if err != nil {
+		observability.EndSQL(conCtx, nil, conSpan, conStart, conEv, nil, err)
 		return details, err
 	}
 	details.Constraints, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (explorer.Constraint, error) {
@@ -219,14 +225,20 @@ func (t *pgTarget) TableDetails(ctx context.Context, schema, table string) (expl
 		err := row.Scan(&constraint.Name, &constraint.Type, &constraint.Definition)
 		return constraint, err
 	})
+	conCount := int64(len(details.Constraints))
+	observability.EndSQL(conCtx, nil, conSpan, conStart, conEv, &conCount, err)
 	if err != nil {
 		return details, err
 	}
-	rows, err = t.conn.Query(ctx, `
+	const idxQuery = `
 		SELECT indexname, indexdef FROM pg_indexes
 		WHERE schemaname = $1 AND tablename = $2
-		ORDER BY indexname`, schema, table)
+		ORDER BY indexname`
+	idxEv := t.sqlEvent(idxQuery, true, schema, table)
+	idxCtx, idxSpan, idxStart := observability.StartSQL(ctx, nil, idxEv)
+	rows, err = t.conn.Query(idxCtx, idxQuery, schema, table)
 	if err != nil {
+		observability.EndSQL(idxCtx, nil, idxSpan, idxStart, idxEv, nil, err)
 		return details, err
 	}
 	details.Indexes, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (explorer.Index, error) {
@@ -234,6 +246,8 @@ func (t *pgTarget) TableDetails(ctx context.Context, schema, table string) (expl
 		err := row.Scan(&index.Name, &index.Definition)
 		return index, err
 	})
+	idxCount := int64(len(details.Indexes))
+	observability.EndSQL(idxCtx, nil, idxSpan, idxStart, idxEv, &idxCount, err)
 	return details, err
 }
 

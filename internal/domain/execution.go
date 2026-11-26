@@ -41,13 +41,22 @@ type ExecutionResult struct {
 }
 
 type ExecutionAttempt struct {
-	AttemptID     int64           `json:"attempt_id"`
-	ExecutionID   string          `json:"execution_id"`
-	AttemptNumber int             `json:"attempt_number"`
-	Status        ExecutionStatus `json:"status"`
-	SQLSnapshot   string          `json:"sql_snapshot"`
-	ErrorCode     string          `json:"error_code,omitempty"`
-	ErrorMessage  string          `json:"error_message,omitempty"`
-	StartedAt     time.Time       `json:"started_at"`
-	FinishedAt    *time.Time      `json:"finished_at,omitempty"`
+	AttemptID          int64           `json:"attempt_id"`
+	ExecutionID        string          `json:"execution_id"`
+	MigrationID        int64           `json:"migration_id,omitempty"`
+	MigrationVersion   int             `json:"migration_version,omitempty"`
+	RevisionID         int64           `json:"revision_id,omitempty"`
+	Revision           int             `json:"revision,omitempty"`
+	Action             MigrationAction `json:"action,omitempty"`
+	Mode               ExecutionMode   `json:"mode,omitempty"`
+	ActorID            int64           `json:"actor_id,omitempty"`
+	ActorUsername      string          `json:"actor_username,omitempty"`
+	RevertsExecutionID *string         `json:"reverts_execution_id,omitempty"`
+	AttemptNumber      int             `json:"attempt_number"`
+	Status             ExecutionStatus `json:"status"`
+	SQLSnapshot        string          `json:"sql_snapshot"`
+	ErrorCode          string          `json:"error_code,omitempty"`
+	ErrorMessage       string          `json:"error_message,omitempty"`
+	StartedAt          time.Time       `json:"started_at"`
+	FinishedAt         *time.Time      `json:"finished_at,omitempty"`
 }

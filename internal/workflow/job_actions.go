@@ -23,14 +23,25 @@ func AvailableActions(state SubmitState, execution domain.ExecutionRequest, canE
 	if execution.Action == domain.MigrationActionRollback {
 		forward := fresh
 		forward.Action, forward.TargetExecutionID = domain.MigrationActionForward, nil
-		actions.CanForward = CanSubmit(state, forward) == nil
+		actions.CanForward = CanSubmit(stateForAction(state, domain.MigrationActionForward, nil), forward) == nil
 		return actions
 	}
 	rollback := fresh
 	target := execution.ExecutionID
 	rollback.Action, rollback.TargetExecutionID = domain.MigrationActionRollback, &target
-	actions.CanRollback = CanSubmit(state, rollback) == nil
+	actions.CanRollback = CanSubmit(stateForAction(state, domain.MigrationActionRollback, &target), rollback) == nil
 	return actions
+}
+
+func stateForAction(state SubmitState, action domain.MigrationAction, target *string) SubmitState {
+	if state.Review == nil {
+		return state
+	}
+	revCopy := *state.Review
+	revCopy.Action = action
+	revCopy.TargetExecutionID = target
+	state.Review = &revCopy
+	return state
 }
 
 type ExecutionReader interface {

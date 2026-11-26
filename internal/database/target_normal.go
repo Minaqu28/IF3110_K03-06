@@ -7,6 +7,7 @@ import (
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 	"github.com/Minaqu28/IF3110_K03-06/internal/explorer"
+	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -53,8 +54,18 @@ func (e *TargetExecutor) runNormal(ctx context.Context, conn *pgx.Conn, req doma
 	if explorer.HasTransactionControl(plan.sql) {
 		return refused(result, ErrorCodeTransactionControl, "transaction control statements are not allowed in migration SQL"), nil
 	}
-	affected, err := runStatements(ctx, tx, plan.sql)
+	ev := observability.SQLEvent{
+		DatabaseID:  req.DatabaseID,
+		Query:       plan.sql,
+		MigrationID: req.MigrationID,
+		JobID:       req.JobID,
+		ExecutionID: req.ExecutionID,
+	}
+	sqlCtx, span, start := observability.StartSQL(ctx, nil, ev)
+	affected, err := runStatements(sqlCtx, tx, plan.sql)
+	observability.EndSQL(sqlCtx, nil, span, start, ev, &affected, err)
 	if err != nil {
+		observability.LogTxOutcome(sqlCtx, nil, ev, false, err)
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
 			return refused(result, pgErr.Code, describeError(err)), nil
@@ -62,15 +73,19 @@ func (e *TargetExecutor) runNormal(ctx context.Context, conn *pgx.Conn, req doma
 		return result, err
 	}
 	if tx.Conn().PgConn().TxStatus() != 'T' {
+		observability.LogTxOutcome(sqlCtx, nil, ev, false, nil)
 		return refused(result, ErrorCodeTransactionEnded, "migration SQL ended the transaction"), nil
 	}
-	if err := plan.record(ctx, tx); err != nil {
+	if err := plan.record(sqlCtx, tx); err != nil {
+		observability.LogTxOutcome(sqlCtx, nil, ev, false, err)
 		return result, err
 	}
-	result, ok := e.commitResult(ctx, conn, tx, result)
+	result, ok := e.commitResult(sqlCtx, conn, tx, result)
 	if !ok {
+		observability.LogTxOutcome(sqlCtx, nil, ev, true, errors.New(result.ErrorMessage))
 		return result, nil
 	}
+	observability.LogTxOutcome(sqlCtx, nil, ev, true, nil)
 	result.Status, result.AffectedRows = domain.ExecutionStatusSucceeded, affected
 	return result, nil
 }

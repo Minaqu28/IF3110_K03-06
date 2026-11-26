@@ -64,7 +64,7 @@ func (s *SubmitPostgresStore) SubmitExecution(ctx context.Context, sub workflow.
 			return workflow.SubmitResult{}, adminError(err)
 		}
 	}
-	if err := createJob(ctx, tx, domain.Job{ID: sub.JobID, ExecutionID: execution.ExecutionID, DatabaseID: req.DatabaseID}); err != nil {
+	if err := createJob(ctx, tx, domain.Job{ID: sub.JobID, ExecutionID: execution.ExecutionID, DatabaseID: req.DatabaseID}, sub.TraceContext); err != nil {
 		return workflow.SubmitResult{}, err
 	}
 	job, err := scanJob(tx.QueryRowContext(ctx, `SELECT `+jobColumns+` FROM migration_jobs WHERE id = $1`, sub.JobID))
@@ -74,7 +74,11 @@ func (s *SubmitPostgresStore) SubmitExecution(ctx context.Context, sub workflow.
 	if err := tx.Commit(); err != nil {
 		return workflow.SubmitResult{}, err
 	}
-	return workflow.SubmitResult{Job: job, Message: jobMessage(job.ID, execution), Created: true}, nil
+	msg := jobMessage(job.ID, execution)
+	if len(sub.TraceContext) > 0 {
+		msg.TraceContext = sub.TraceContext
+	}
+	return workflow.SubmitResult{Job: job, Message: msg, Created: true}, nil
 }
 
 func jobMessage(jobID string, e domain.ExecutionRequest) domain.MigrationJobMessage {

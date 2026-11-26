@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
@@ -25,7 +26,7 @@ func (s *JobPostgresStore) PublishDue(ctx context.Context, limit int, publish fu
 	defer tx.Rollback()
 	rows, err := tx.QueryContext(ctx, `
 		SELECT j.id, e.id, e.database_id, e.migration_id, e.revision_id, e.approval_request_id,
-		       e.requested_by, e.action, e.mode, e.target_execution_id, e.requested_at
+		       e.requested_by, e.action, e.mode, e.target_execution_id, e.requested_at, j.trace_context
 		FROM migration_jobs j
 		JOIN migration_executions e ON e.id = j.execution_id
 		WHERE j.published_at IS NULL
@@ -70,9 +71,10 @@ func scanJobMessages(rows *sql.Rows) ([]domain.MigrationJobMessage, error) {
 			actor        sql.NullInt64
 			action, mode string
 			target       sql.NullString
+			traceRaw     []byte
 		)
 		if err := rows.Scan(&msg.JobID, &msg.ExecutionID, &msg.DatabaseID, &msg.MigrationID, &msg.RevisionID,
-			&msg.ApprovalRequestID, &actor, &action, &mode, &target, &msg.RequestedAt); err != nil {
+			&msg.ApprovalRequestID, &actor, &action, &mode, &target, &msg.RequestedAt, &traceRaw); err != nil {
 			return nil, err
 		}
 		msg.SchemaVersion = domain.MigrationJobSchemaVersion
@@ -82,6 +84,12 @@ func scanJobMessages(rows *sql.Rows) ([]domain.MigrationJobMessage, error) {
 		if target.Valid {
 			t := target.String
 			msg.TargetExecutionID = &t
+		}
+		if len(traceRaw) > 0 {
+			var tc map[string]string
+			if err := json.Unmarshal(traceRaw, &tc); err == nil && len(tc) > 0 {
+				msg.TraceContext = tc
+			}
 		}
 		messages = append(messages, msg)
 	}

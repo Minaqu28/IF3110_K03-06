@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/explorer"
+	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
 )
 
 var _ explorer.PlanTarget = (*pgTarget)(nil)
@@ -28,10 +29,15 @@ func (t *pgTarget) Explain(ctx context.Context, query string, analyze bool) (exp
 		options += ", ANALYZE TRUE, BUFFERS TRUE, TIMING TRUE"
 	}
 	statement := fmt.Sprintf("EXPLAIN (%s) %s", options, query)
+	ev := t.sqlEvent(statement, true)
+	ctx, span, start := observability.StartSQL(ctx, nil, ev)
 	var raw []byte
 	if err := t.conn.QueryRow(ctx, statement).Scan(&raw); err != nil {
+		observability.EndSQL(ctx, nil, span, start, ev, nil, err)
 		return explorer.ExecutionPlan{}, &explorer.PlanQueryError{Message: describeError(err), Err: err}
 	}
+	rowCount := int64(1)
+	observability.EndSQL(ctx, nil, span, start, ev, &rowCount, nil)
 	var documents []postgresPlanDocument
 	if err := json.Unmarshal(raw, &documents); err != nil {
 		return explorer.ExecutionPlan{}, fmt.Errorf("decode execution plan: %w", err)

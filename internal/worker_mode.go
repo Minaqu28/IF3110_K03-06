@@ -92,7 +92,7 @@ func runWorker(db *sql.DB, adminStore *database.AdminPostgresStore, adminService
 	if err != nil {
 		return err
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log := slog.Default()
 	conn, err := amqp.DialConfig(cfg.amqpURL, amqp.Config{Dial: amqp.DefaultDial(brokerDialTimeout)})
 	if err != nil {
 		return fmt.Errorf("connect to the message broker: %w", err)
