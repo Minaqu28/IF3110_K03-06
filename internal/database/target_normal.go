@@ -3,12 +3,10 @@ package database
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 	"github.com/Minaqu28/IF3110_K03-06/internal/explorer"
-	"github.com/Minaqu28/IF3110_K03-06/internal/migrationengine"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -69,15 +67,8 @@ func (e *TargetExecutor) runNormal(ctx context.Context, conn *pgx.Conn, req doma
 	if err := plan.record(ctx, tx); err != nil {
 		return result, err
 	}
-	if e.beforeCommit != nil {
-		e.beforeCommit(conn.PgConn().PID())
-	}
-	if err := tx.Commit(ctx); err != nil {
-		if pgErr, ok := commitRejected(err); ok {
-			return refused(result, pgErr.Code, describeError(err)), nil
-		}
-		result.Status, result.ErrorCode = domain.ExecutionStatusUnknown, ErrorCodeCommitUncertain
-		result.ErrorMessage = fmt.Errorf("%w: %w", migrationengine.ErrCommitUncertain, err).Error()
+	result, ok := e.commitResult(ctx, conn, tx, result)
+	if !ok {
 		return result, nil
 	}
 	result.Status, result.AffectedRows = domain.ExecutionStatusSucceeded, affected
