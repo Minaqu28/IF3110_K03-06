@@ -69,6 +69,10 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
+	largeRows, err := largeRowsFromEnv()
+	if err != nil {
+		return err
+	}
 	platformURL := mustEnv("DATABASE_URL")
 	credKey := mustEnv("DB_CREDENTIAL_KEY")
 	targetPassword := mustEnv("TARGET_DB_PASSWORD")
@@ -210,7 +214,19 @@ func run() error {
 		}
 	}
 
+	var large *largeSeedResult
+	if largeRows > 0 {
+		r, err := seedLargeOrders(targetURL("target"), largeRows)
+		if err != nil {
+			return fmt.Errorf("seed large_orders: %w", err)
+		}
+		large = &r
+	}
+
 	printSummary(userPassword)
+	if large != nil {
+		printLargeSummary(*large)
+	}
 	return nil
 }
 
