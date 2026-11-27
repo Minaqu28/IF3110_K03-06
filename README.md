@@ -1,6 +1,8 @@
 
 # IF3110 K03-06 — Database Migration Management Platform
 
+![](https://c.tenor.com/SgzzUiQHxKkAAAAC/tenor.gif)
+
 Platform ini mengelola akses bersama ke beberapa database PostgreSQL dan migration berversi. Admin mendaftarkan user, group, koneksi, dan grant. User melihat database sesuai grant group; perubahan schema/data dikirim sebagai migration, direview leader group terkait, lalu diproses secara asynchronous oleh worker.
 
 ```text
@@ -11,16 +13,26 @@ Login → Access Control → Select Database → View Schema/Data
 
 ## Isi README
 
-- [Menjalankan aplikasi](#menjalankan-aplikasi)
-- [Konfigurasi environment](#konfigurasi-environment)
-- [Arsitektur dan alur approval](#arsitektur-dan-alur-approval)
-- [Migration, batch, dan riwayat](#migration-batch-dan-riwayat)
-- [Pemulihan lock jika worker gagal](#pemulihan-lock-jika-worker-gagal)
-- [Dataset besar dan benchmark UPDATE](#dataset-besar-dan-benchmark-update)
-- [Logging dan tracing](#logging-dan-tracing)
-- [Observability](#observability)
-- [REST API](#rest-api)
-- [Pengujian beban k6](#pengujian-beban-k6)
+- [IF3110 K03-06 — Database Migration Management Platform](#if3110-k03-06--database-migration-management-platform)
+  - [Isi README](#isi-readme)
+  - [Menjalankan aplikasi](#menjalankan-aplikasi)
+  - [Konfigurasi environment](#konfigurasi-environment)
+  - [Arsitektur dan alur approval](#arsitektur-dan-alur-approval)
+    - [Autentikasi dan access control](#autentikasi-dan-access-control)
+  - [Migration, batch, dan riwayat](#migration-batch-dan-riwayat)
+  - [Pemulihan lock jika worker gagal](#pemulihan-lock-jika-worker-gagal)
+  - [Dataset besar dan benchmark UPDATE](#dataset-besar-dan-benchmark-update)
+  - [Logging dan tracing](#logging-dan-tracing)
+  - [Observability](#observability)
+  - [Pengujian otomatis](#pengujian-otomatis)
+  - [REST API](#rest-api)
+  - [Pengujian beban k6](#pengujian-beban-k6)
+    - [Test Scenarios](#test-scenarios)
+    - [Pass Thresholds](#pass-thresholds)
+    - [How to Run](#how-to-run)
+    - [Stress Test Results (`k6/summary.json`)](#stress-test-results-k6summaryjson)
+    - [Analysis](#analysis)
+    - [Hasil per tingkat beban](#hasil-per-tingkat-beban)
 
 ## Menjalankan aplikasi
 
