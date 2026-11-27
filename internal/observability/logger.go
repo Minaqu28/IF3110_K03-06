@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -13,7 +14,7 @@ type ContextHandler struct {
 	inner slog.Handler
 }
 
-func NewLogger(w io.Writer, level slog.Level) *slog.Logger {
+func NewLogger(w io.Writer, level slog.Level, extra ...slog.Handler) *slog.Logger {
 	if w == nil {
 		w = os.Stdout
 	}
@@ -23,7 +24,11 @@ func NewLogger(w io.Writer, level slog.Level) *slog.Logger {
 			return MaskAttr(a)
 		},
 	})
-	return slog.New(&ContextHandler{inner: jsonHandler})
+	var inner slog.Handler = jsonHandler
+	if extra = slices.DeleteFunc(extra, func(h slog.Handler) bool { return h == nil }); len(extra) > 0 {
+		inner = &fanoutHandler{handlers: append([]slog.Handler{jsonHandler}, extra...)}
+	}
+	return slog.New(&ContextHandler{inner: inner})
 }
 
 func (h *ContextHandler) Enabled(ctx context.Context, level slog.Level) bool {

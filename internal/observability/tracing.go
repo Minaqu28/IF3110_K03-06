@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -35,25 +36,22 @@ func InitTracing(ctx context.Context, serviceName, exporterMode string, w io.Wri
 		sdktrace.WithResource(res),
 	}
 
-	mode := strings.ToLower(strings.TrimSpace(exporterMode))
-	if mode == "" {
-		mode = "console"
-	}
-	switch mode {
-	case "console", "stdout":
-		exp, err := stdouttrace.New(stdouttrace.WithWriter(w))
-		if err != nil {
-			return nil, err
+	for _, mode := range ExporterModes(exporterMode) {
+		switch mode {
+		case "otlp":
+			exp, err := otlptracehttp.New(ctx)
+			if err != nil {
+				return nil, err
+			}
+			opts = append(opts, sdktrace.WithBatcher(exp))
+		case "none", "disabled":
+		default:
+			exp, err := stdouttrace.New(stdouttrace.WithWriter(w))
+			if err != nil {
+				return nil, err
+			}
+			opts = append(opts, sdktrace.WithSyncer(exp))
 		}
-		opts = append(opts, sdktrace.WithSyncer(exp))
-	case "none", "disabled":
-		// Keep SDK TracerProvider active so trace_id/span_id are still generated for log correlation.
-	default:
-		exp, err := stdouttrace.New(stdouttrace.WithWriter(w))
-		if err != nil {
-			return nil, err
-		}
-		opts = append(opts, sdktrace.WithSyncer(exp))
 	}
 
 	tp := sdktrace.NewTracerProvider(opts...)
@@ -63,6 +61,19 @@ func InitTracing(ctx context.Context, serviceName, exporterMode string, w io.Wri
 		propagation.Baggage{},
 	))
 	return tp.Shutdown, nil
+}
+
+func ExporterModes(raw string) []string {
+	var modes []string
+	for _, part := range strings.Split(raw, ",") {
+		if m := strings.ToLower(strings.TrimSpace(part)); m != "" {
+			modes = append(modes, m)
+		}
+	}
+	if len(modes) == 0 {
+		return []string{"console"}
+	}
+	return modes
 }
 
 func Tracer() trace.Tracer {
