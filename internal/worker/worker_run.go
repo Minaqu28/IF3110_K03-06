@@ -47,6 +47,9 @@ func (w *Worker) handle(ctx context.Context, d JobDelivery) {
 	if !ok {
 		return
 	}
+	if job.AttemptCount == 0 && !job.CreatedAt.IsZero() {
+		w.rec.QueueWait(w.now().Sub(job.CreatedAt))
+	}
 	lockCtx, lockSpan := observability.Tracer().Start(ctx, "worker.lock",
 		trace.WithAttributes(
 			attribute.Int64("database.id", msg.DatabaseID),
@@ -54,7 +57,9 @@ func (w *Worker) handle(ctx context.Context, d JobDelivery) {
 			attribute.String("worker.id", w.id),
 		),
 	)
+	lockStart := w.now()
 	held, acquired, err := w.acquire(lockCtx, log, msg.DatabaseID, msg.ExecutionID)
+	w.rec.LockWait(w.now().Sub(lockStart), err == nil && acquired)
 	if err != nil {
 		lockSpan.RecordError(err)
 		lockSpan.SetStatus(codes.Error, err.Error())
@@ -105,7 +110,9 @@ func (w *Worker) handle(ctx context.Context, d JobDelivery) {
 	}
 	log.InfoContext(runCtx, "job started", "event", "worker.start", "status", "running", "attempt", job.AttemptCount, "action", msg.Action, "mode", msg.Mode, "redelivered", d.Redelivered())
 	run := w.active.track(msg.ExecutionID, job, jobs)
+	execStart := w.now()
 	result, err := w.deps.Executor.Execute(runCtx, req)
+	execDuration := w.now().Sub(execStart)
 	w.active.untrack(msg.ExecutionID, run)
 	job = run.latest()
 	if cause := context.Cause(runCtx); errors.Is(cause, ErrLockLost) {
@@ -113,6 +120,7 @@ func (w *Worker) handle(ctx context.Context, d JobDelivery) {
 		log.ErrorContext(ctx, "the run lost its database lock", "event", "worker.lock_lost", "status", "error", "error", err)
 	}
 	finalJob := outcome(job, msg, result, err)
+	w.rec.JobFinished(msg.Action, msg.Mode, finalJob.Status, execDuration)
 	if finalJob.Status == domain.JobStatusSucceeded {
 		span.SetStatus(codes.Ok, "")
 	} else {
@@ -135,6 +143,7 @@ func (w *Worker) busy(ctx context.Context, log *slog.Logger, d JobDelivery, job 
 		w.unsaved(log, d, err)
 		return
 	}
+	w.rec.Retry("locked")
 	log.Info("database is locked by another execution; retrying later", "retry_in", w.lockWait)
 	w.settle(log, "ack", d.Ack)
 }
@@ -171,6 +180,9 @@ func (w *Worker) saveThenAck(ctx context.Context, log *slog.Logger, d JobDeliver
 	if err != nil {
 		w.unsaved(log, d, err)
 		return
+	}
+	if delay > 0 {
+		w.rec.Retry("transient")
 	}
 	log.Info("job saved", "status", job.Status, "attempt", job.AttemptCount, "error_code", job.ErrorCode, "retry_in", delay)
 	w.settle(log, "ack", d.Ack)

@@ -29,6 +29,7 @@ type Worker struct {
 	heartbeat time.Duration
 	lockWait  time.Duration
 	active    activeRuns
+	rec       Recorder
 }
 
 func New(deps Dependencies, id string, log *slog.Logger) *Worker {
@@ -36,7 +37,7 @@ func New(deps Dependencies, id string, log *slog.Logger) *Worker {
 		log = slog.Default()
 	}
 	return &Worker{deps: deps, id: id, log: log.With("worker", id), now: time.Now, retry: DefaultRetryPolicy(),
-		heartbeat: DefaultHeartbeatInterval, lockWait: DefaultLockWait}
+		heartbeat: DefaultHeartbeatInterval, lockWait: DefaultLockWait, rec: nopRecorder{}}
 }
 
 func (w *Worker) admit(ctx context.Context, log *slog.Logger, d JobDelivery) (domain.Job, bool) {

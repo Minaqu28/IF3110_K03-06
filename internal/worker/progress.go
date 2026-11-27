@@ -64,6 +64,13 @@ func (w *Worker) ReportProgress(ctx context.Context, executionID string, progres
 	if err := run.jobs.SaveJob(ctx, job); err != nil {
 		return err
 	}
+	batches, rows := progress.Completed, progress.AffectedRows
+	if prev := run.job.Progress; prev != nil {
+		batches, rows = batches-prev.Completed, rows-prev.AffectedRows
+	}
+	if batches > 0 || rows > 0 {
+		w.rec.BatchesCommitted(max(batches, 0), max(rows, 0))
+	}
 	run.job = job
 	return nil
 }
