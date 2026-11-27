@@ -150,6 +150,9 @@ function renderNavigation() {
   if (!session) return;
   nav.append(link('Dashboard', '/dashboard'), link('Database', '/databases'));
   if (session.user.is_platform_admin) nav.append(link('Admin', '/admin'));
+  for (const item of nav.querySelectorAll('a')) {
+    if (location.pathname === item.pathname || location.pathname.startsWith(`${item.pathname}/`)) item.setAttribute('aria-current', 'page');
+  }
   const logout = node('button', 'Keluar', { type: 'button' });
   logout.addEventListener('click', async () => {
     try {
@@ -171,6 +174,8 @@ function renderLogin() {
   const password = field(form, 'Password', 'password', 'password');
   const errorBox = node('p', '', { role: 'alert', class: 'error' });
   const submit = node('button', 'Masuk', { type: 'submit' });
+  form.className = 'login-grid';
+  form.prepend(node('img', '', { class: 'login-art', src: '/app/assets/aqua.gif', alt: '', width: '220', height: '166' }));
   form.append(errorBox, submit);
   main.append(form);
   form.addEventListener('submit', async event => {
