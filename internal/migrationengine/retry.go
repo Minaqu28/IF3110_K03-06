@@ -17,16 +17,6 @@ const (
 	ErrorUncertain
 )
 
-func (c ErrorClass) String() string {
-	switch c {
-	case ErrorTransient:
-		return "transient"
-	case ErrorUncertain:
-		return "uncertain"
-	}
-	return "permanent"
-}
-
 var (
 	ErrCommitUncertain = errors.New("the commit outcome is unknown")
 	ErrTargetBusy      = errors.New("another migration is running on the target database")

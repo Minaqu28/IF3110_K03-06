@@ -47,7 +47,7 @@ func TestWorkflowHandlerEndpoints(t *testing.T) {
 		},
 	}
 
-	router := NewApplicationRouterWithWorkflow(authHandler, nil, nil, NewWorkflowHandler(authHandler, queries, wf), nil, func(context.Context) error { return nil })
+	router := NewApplicationRouterWithSPA(authHandler, nil, nil, NewWorkflowHandler(authHandler, queries, wf), nil, nil, nil, nil, nil, func(context.Context) error { return nil })
 
 	// GET history with hide_rollback=true
 	req := httptest.NewRequest(http.MethodGet, "/api/databases/4/history?hide_rollback=true", nil)

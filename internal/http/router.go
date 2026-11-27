@@ -2,38 +2,17 @@ package httpserver
 
 import (
 	"context"
-	"html/template"
 	"io/fs"
 	"net/http"
 	"strings"
 	"time"
 )
 
-// NewRouter registers the routes available in the frontend foundation.
-func NewRouter(pages *template.Template, static fs.FS) http.Handler {
-	pageHandler := &PageHandler{pages: pages}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", pageHandler.Health)
-	mux.HandleFunc("GET /{$}", pageHandler.Home)
-	mux.HandleFunc("GET /login", pageHandler.Login)
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
-	return observabilityMiddleware(securityHeaders(mux))
+func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, static fs.FS, health func(context.Context) error) http.Handler {
+	return NewApplicationRouterWithSPA(authenticationHandler, adminHandler, databaseHandler, nil, nil, nil, nil, static, nil, health)
 }
 
-// NewAuthenticatedRouter wires the authentication handler when a session store is ready.
-func NewAuthenticatedRouter(authenticationHandler *AuthenticationHandler, static fs.FS, health func(context.Context) error) http.Handler {
-	return NewApplicationRouter(authenticationHandler, nil, nil, static, health)
-}
-
-func NewApplicationRouter(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, static fs.FS, health func(context.Context) error, routes ...func(*http.ServeMux)) http.Handler {
-	return NewApplicationRouterWithSPA(authenticationHandler, adminHandler, databaseHandler, nil, nil, nil, nil, static, nil, health, routes...)
-}
-
-func NewApplicationRouterWithWorkflow(authenticationHandler *AuthenticationHandler, adminHandler *AdminHandler, databaseHandler *DatabaseHandler, workflowHandler *WorkflowHandler, static fs.FS, health func(context.Context) error, routes ...func(*http.ServeMux)) http.Handler {
-	return NewApplicationRouterWithSPA(authenticationHandler, adminHandler, databaseHandler, workflowHandler, nil, nil, nil, static, nil, health, routes...)
-}
-
-// NewApplicationRouterWithSPA wires the JSON API, workflow endpoints, optional custom route registrars, and embedded SPA assets.
+// NewApplicationRouterWithSPA wires the JSON API, workflow endpoints, and embedded SPA assets.
 func NewApplicationRouterWithSPA(
 	authenticationHandler *AuthenticationHandler,
 	adminHandler *AdminHandler,
@@ -44,7 +23,6 @@ func NewApplicationRouterWithSPA(
 	actions JobActionAdvisor,
 	static, spa fs.FS,
 	health func(context.Context) error,
-	routes ...func(*http.ServeMux),
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler(health))
@@ -74,10 +52,8 @@ func NewApplicationRouterWithSPA(
 		mux.HandleFunc("GET /api/v1/databases/{id}/reviews/{reviewId}/decisions", services.reviewDecisions)
 		mux.HandleFunc("POST /api/v1/reviews/{id}/decision", services.decide)
 		mux.HandleFunc("POST /api/v1/jobs", services.submit)
-		if len(routes) == 0 {
-			mux.HandleFunc("POST /api/v1/databases/{id}/executions", services.submitForDatabase)
-			mux.HandleFunc("GET /api/v1/jobs/{id}", services.job)
-		}
+		mux.HandleFunc("POST /api/v1/databases/{id}/executions", services.submitForDatabase)
+		mux.HandleFunc("GET /api/v1/jobs/{id}", services.job)
 	}
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, _ *http.Request) {
 		jsonError(w, 404, "NOT_FOUND", "Endpoint tidak ditemukan.")
@@ -91,13 +67,6 @@ func NewApplicationRouterWithSPA(
 		mux.HandleFunc("POST /api/reviews/{reviewId}/decide", workflowHandler.DecideApproval)
 		mux.HandleFunc("POST /api/databases/{id}/executions", workflowHandler.SubmitExecution)
 		mux.HandleFunc("GET /api/jobs/{jobId}", workflowHandler.GetJob)
-	}
-
-	// Extra route registrars (e.g. standalone JobAPI routes in tests or dedicated integrations)
-	for _, register := range routes {
-		if register != nil {
-			register(mux)
-		}
 	}
 
 	// Embedded SPA or legacy SSR pages

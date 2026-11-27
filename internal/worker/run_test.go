@@ -14,7 +14,6 @@ import (
 type loopHarness struct {
 	mu        sync.Mutex
 	inbox     chan JobDelivery
-	receive   error
 	acks      int
 	final     map[string]domain.JobStatus
 	running   int

@@ -75,11 +75,3 @@ func TestClassifyError(t *testing.T) {
 		}
 	}
 }
-
-func TestErrorClassString(t *testing.T) {
-	for class, want := range map[ErrorClass]string{ErrorPermanent: "permanent", ErrorTransient: "transient", ErrorUncertain: "uncertain"} {
-		if class.String() != want {
-			t.Errorf("%d.String() = %q, want %q", class, class.String(), want)
-		}
-	}
-}

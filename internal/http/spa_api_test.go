@@ -330,3 +330,9 @@ func TestSPAWorkflowEndpoints(t *testing.T) {
 		t.Fatalf("job status=%d body=%s", jobRec.Code, jobRec.Body.String())
 	}
 }
+
+type advisorFunc func(context.Context, domain.User, domain.Job) (workflow.JobActions, error)
+
+func (f advisorFunc) Actions(ctx context.Context, u domain.User, j domain.Job) (workflow.JobActions, error) {
+	return f(ctx, u, j)
+}

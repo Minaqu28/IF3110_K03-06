@@ -34,7 +34,7 @@ func TestJobQueryAndActionsPostgres(t *testing.T) {
 	}
 	jobs := database.NewJobPostgresStore(db)
 	author := domain.User{ID: f.userID, Username: "author", IsActive: true}
-	query := workflow.NewJobQueryService(access, jobs)
+	query := workflow.NewJobService(access, nil, nil, nil, jobs)
 	advisor := workflow.NewActionAdvisor(access, database.NewExecutionPostgresStore(db), submits)
 
 	job, err := query.GetJob(ctx, author, jobA)
@@ -58,7 +58,7 @@ func TestJobQueryAndActionsPostgres(t *testing.T) {
 		t.Fatalf("view-only actions = %+v", actions)
 	}
 	execSQL(t, db, `DELETE FROM group_database_access WHERE group_id = $1`, group)
-	if _, err := query.GetJob(ctx, author, jobA); !errors.Is(err, admin.ErrNotFound) {
-		t.Fatalf("no access: err = %v, want not found", err)
+	if _, err := query.GetJob(ctx, author, jobA); !errors.Is(err, admin.ErrForbidden) {
+		t.Fatalf("no access: err = %v, want forbidden", err)
 	}
 }

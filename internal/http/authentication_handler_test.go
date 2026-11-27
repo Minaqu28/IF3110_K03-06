@@ -37,7 +37,7 @@ func TestAuthenticatedRouterLoginCSRF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	router := NewAuthenticatedRouter(handler, nil, func(context.Context) error { return nil })
+	router := NewApplicationRouter(handler, nil, nil, nil, func(context.Context) error { return nil })
 
 	get := httptest.NewRecorder()
 	router.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/login", nil))

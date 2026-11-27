@@ -483,11 +483,6 @@ func (t *pgTarget) resetTx(ctx context.Context) {
 	}
 }
 
-func collect(rr *pgconn.ResultReader, maxRows int) explorer.StatementResult {
-	res, _, _ := collectWithMeta(rr, maxRows)
-	return res
-}
-
 func collectWithMeta(rr *pgconn.ResultReader, maxRows int) (explorer.StatementResult, int64, error) {
 	var result explorer.StatementResult
 	for _, field := range rr.FieldDescriptions() {
