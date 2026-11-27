@@ -102,7 +102,7 @@ type ExecutionAuthorizer interface {
 	AuthorizeExecution(ctx context.Context, request domain.ExecutionRequest) error
 }
 
-// MigrationExecutor menghubungkan worker dengan engine milik Anggota 2.
+// MigrationExecutor menghubungkan worker dengan migration engine.
 type MigrationExecutor interface {
 	// Execute meneruskan satu request yang sudah direvalidasi ke engine. Retry job
 	// yang sama harus tetap memakai execution ID yang sama agar idempotent.

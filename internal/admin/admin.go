@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -15,6 +16,9 @@ var ErrForbidden = errors.New("forbidden operation")
 var ErrNotFound = errors.New("not found")
 var ErrConflict = errors.New("operation is conflicted")
 var ErrInvalidInput = errors.New("input invalid")
+
+var ErrLeaderNotMember = fmt.Errorf("%w: leader harus menjadi anggota grup tersebut", ErrInvalidInput)
+var ErrMemberIsLeader = fmt.Errorf("%w: user ini adalah leader grup; tetapkan leader lain sebelum mengeluarkannya dari grup", ErrConflict)
 
 type AdminStore interface {
 	CreateUser(ctx context.Context, username, passwordHash string, isAdmin bool) (domain.User, error)

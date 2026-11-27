@@ -81,6 +81,11 @@ func adminError(err error) error {
 	return err
 }
 
+func isLeaderMembershipViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503" && pgErr.ConstraintName == "groups_leader_is_member"
+}
+
 func rowsAffected(result sql.Result, err error) error {
 	if err != nil {
 		return adminError(err)
@@ -225,9 +230,26 @@ func (s *AdminPostgresStore) SetGroupLeader(ctx context.Context, groupID int64, 
 		if !active {
 			return admin.ErrInvalidInput
 		}
+		var member bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM group_members WHERE group_id = $1 AND user_id = $2)`, groupID, *leaderID).Scan(&member); err != nil {
+			return err
+		}
+		if !member {
+			var exists bool
+			if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM groups WHERE id = $1)`, groupID).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return admin.ErrNotFound
+			}
+			return admin.ErrLeaderNotMember
+		}
 		leader = *leaderID
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE groups SET leader_id = $2 WHERE id = $1`, groupID, leader)
+	if isLeaderMembershipViolation(err) {
+		return admin.ErrLeaderNotMember
+	}
 	return rowsAffected(result, err)
 }
 
@@ -269,6 +291,14 @@ func (s *AdminPostgresStore) RemoveMember(ctx context.Context, groupID, userID i
 		return err
 	}
 	defer tx.Rollback()
+	var isLeader bool
+	err = tx.QueryRowContext(ctx, `SELECT leader_id IS NOT DISTINCT FROM $2 FROM groups WHERE id = $1 FOR UPDATE`, groupID, userID).Scan(&isLeader)
+	if err != nil {
+		return adminError(err)
+	}
+	if isLeader {
+		return admin.ErrMemberIsLeader
+	}
 	result, err := tx.ExecContext(ctx, `DELETE FROM group_members WHERE group_id = $1 AND user_id = $2`, groupID, userID)
 	if err := rowsAffected(result, err); err != nil {
 		return err

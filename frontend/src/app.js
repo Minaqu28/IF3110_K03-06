@@ -679,7 +679,6 @@ async function renderHistory(databaseID, ticket) {
   heading('Riwayat Eksekusi');
   main.append(databaseSubNav(databaseID, 'history'));
 
-  // Hide rollback checkbox (SPECS.txt required)
   const filterPanel = node('section', '', { class: 'panel' });
   const label = node('label', '', { class: 'checkbox-label' });
   const cb = document.createElement('input');

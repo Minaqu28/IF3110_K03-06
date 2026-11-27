@@ -18,11 +18,23 @@ import (
 func insertGroupWithLeader(t *testing.T, db *sql.DB, name string) (groupID, leaderID int64) {
 	t.Helper()
 	leaderID = insertUser(t, db, name+"-leader", "leader-long-password", false).ID
-	if err := db.QueryRowContext(context.Background(), `
-		INSERT INTO groups (name, leader_id) VALUES ($1, $2) RETURNING id`, name, leaderID).Scan(&groupID); err != nil {
+	return insertGroupLedBy(t, db, name, leaderID), leaderID
+}
+
+func insertGroupLedBy(t *testing.T, db *sql.DB, name string, leaderID int64) int64 {
+	t.Helper()
+	ctx := context.Background()
+	var groupID int64
+	if err := db.QueryRowContext(ctx, `INSERT INTO groups (name) VALUES ($1) RETURNING id`, name).Scan(&groupID); err != nil {
 		t.Fatal(err)
 	}
-	return groupID, leaderID
+	if _, err := db.ExecContext(ctx, `INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)`, groupID, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE groups SET leader_id = $2 WHERE id = $1`, groupID, leaderID); err != nil {
+		t.Fatal(err)
+	}
+	return groupID
 }
 
 func TestApprovalStoreCreateReviewPostgres(t *testing.T) {
@@ -247,10 +259,7 @@ func TestDecideReviewPostgres(t *testing.T) {
 	store := database.NewApprovalPostgresStore(db)
 	groupA, leaderA := insertGroupWithLeader(t, db, "group-a")
 	groupB, leaderB := insertGroupWithLeader(t, db, "group-b")
-	var groupC int64
-	if err := db.QueryRowContext(ctx, `INSERT INTO groups (name, leader_id) VALUES ('group-c', $1) RETURNING id`, leaderA).Scan(&groupC); err != nil {
-		t.Fatal(err)
-	}
+	groupC := insertGroupLedBy(t, db, "group-c", leaderA)
 	approvers := []workflow.RequiredApprover{{GroupID: groupA, LeaderID: leaderA}, {GroupID: groupB, LeaderID: leaderB}, {GroupID: groupC, LeaderID: leaderA}}
 	decide := func(review, leader int64, status domain.ApprovalStatus) (domain.ReviewRequest, error) {
 		return store.DecideReview(ctx, review, leader, status, "note", workflow.ResolveReview)

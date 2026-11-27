@@ -42,7 +42,7 @@ type seedUser struct {
 }
 
 var users = []seedUser{
-	{name: "root2", admin: true, note: "second platform admin"},
+	{name: "root2", admin: true, groups: []string{"auditors"}, note: "second platform admin, leader of auditors"},
 	{name: "user1", groups: []string{"developers"}, note: "developer: View + Edit on shop"},
 	{name: "user2", groups: []string{"analysts"}, note: "analyst: View Only on shop, View + Edit on analytics"},
 	{name: "user3", groups: []string{"developers", "analysts"}, note: "in two groups: highest grant wins"},
