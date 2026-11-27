@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: dbmp-app
+    dns_sd_configs:
+      - names: [app]
+        type: A
+        port: 9090
+  - job_name: dbmp-worker
+    dns_sd_configs:
+      - names: [worker]
+        type: A
+        port: 9090
