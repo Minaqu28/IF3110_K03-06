@@ -286,7 +286,7 @@ func TestNoAccessIsForbidden(t *testing.T) {
 	}
 }
 
-func TestViewOnlyCanSeeMigrationHistoryAndDetailButCannotMutateMigrations(t *testing.T) {
+func TestViewOnlyCanSeeMigrationHistoryAndDetail(t *testing.T) {
 	store := &fakeStore{
 		target: &fakeTarget{},
 		migrations: []Migration{
@@ -307,53 +307,6 @@ func TestViewOnlyCanSeeMigrationHistoryAndDetailButCannotMutateMigrations(t *tes
 	detail, err := svc.ShowMigration(context.Background(), actor, 1, 1)
 	if err != nil || detail.SelectedMigration == nil || len(detail.SelectedMigration.Operations) != 2 {
 		t.Fatalf("VIEW_ONLY should see migration detail & operations, got %+v, err=%v", detail.SelectedMigration, err)
-	}
-
-	if _, err := svc.CreateMigration(context.Background(), actor, 1, "m2", "DROP TABLE t"); !errors.Is(err, ErrReadOnly) {
-		t.Fatalf("CreateMigration by VIEW_ONLY: err = %v, want ErrReadOnly", err)
-	}
-	if _, err := svc.UpdateMigration(context.Background(), actor, 1, 1, "m1", "DROP TABLE t"); !errors.Is(err, ErrReadOnly) {
-		t.Fatalf("UpdateMigration by VIEW_ONLY: err = %v, want ErrReadOnly", err)
-	}
-	if _, err := svc.ExecuteMigration(context.Background(), actor, 1, 1); !errors.Is(err, ErrReadOnly) {
-		t.Fatalf("ExecuteMigration by VIEW_ONLY: err = %v, want ErrReadOnly", err)
-	}
-}
-
-func TestMigrationLifecycleAndTransactionalExecution(t *testing.T) {
-	target := &fakeTarget{}
-	store := &fakeStore{target: target}
-	svc := NewService(fakeAccess{level: authorization.AccessViewEdit}, store)
-	actor := domain.User{ID: 5, IsActive: true}
-
-	// 1. Preview SQL operations before creating
-	prev, err := svc.PreviewMigration(context.Background(), actor, 1, 0, "add users", "CREATE TABLE u (id int); INSERT INTO u VALUES (1);")
-	if err != nil || len(prev.PreviewOps) != 2 {
-		t.Fatalf("PreviewMigration ops = %v, err = %v", prev.PreviewOps, err)
-	}
-
-	// 2. Create DRAFT migration
-	created, err := svc.CreateMigration(context.Background(), actor, 1, "add users", "CREATE TABLE u (id int);")
-	if err != nil || created.SelectedMigration == nil || created.SelectedMigration.Status != "DRAFT" {
-		t.Fatalf("CreateMigration = %+v, err = %v", created.SelectedMigration, err)
-	}
-
-	// 3. Edit DRAFT migration before executing
-	updated, err := svc.UpdateMigration(context.Background(), actor, 1, 1, "add users v2", "CREATE TABLE u (id int); INSERT INTO u VALUES (1);")
-	if err != nil || updated.SelectedMigration.Title != "add users v2" || len(updated.PreviewOps) != 2 {
-		t.Fatalf("UpdateMigration = %+v, err = %v", updated.SelectedMigration, err)
-	}
-
-	// 4. Execute migration in transaction (success -> commit + change log)
-	executed, err := svc.ExecuteMigration(context.Background(), actor, 1, 1)
-	if err != nil || executed.SelectedMigration.Status != "SUCCESS" {
-		t.Fatalf("ExecuteMigration = %+v, err = %v", executed.SelectedMigration, err)
-	}
-	if len(target.txStmts) != 1 || len(target.txStmts[0]) != 2 {
-		t.Fatalf("expected transactional execution of 2 statements, got %+v", target.txStmts)
-	}
-	if len(executed.Changes) != 1 || executed.Changes[0].Source != "MIGRATION" {
-		t.Fatalf("expected change log entry, got %+v", executed.Changes)
 	}
 }
 

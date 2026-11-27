@@ -3,7 +3,6 @@ package httpserver
 import (
 	"context"
 	"errors"
-	"fmt"
 	"html/template"
 	"net/http"
 	"time"
@@ -136,19 +135,6 @@ func (h *DatabaseHandler) renderViewOrError(w http.ResponseWriter, session authe
 	renderPageStatus(w, h.pages, "database.html", databasePage{Session: session, View: view}, status)
 }
 
-func (h *DatabaseHandler) redirectMigration(w http.ResponseWriter, r *http.Request, view explorer.View, err error) bool {
-	if err != nil || view.Error != "" || view.SelectedMigration == nil {
-		return false
-	}
-	for _, result := range view.Results {
-		if result.Error != "" {
-			return false
-		}
-	}
-	http.Redirect(w, r, fmt.Sprintf("/databases/%d?migration=%d", view.Connection.ID, view.SelectedMigration.Version), http.StatusSeeOther)
-	return true
-}
-
 func (h *DatabaseHandler) Explain(w http.ResponseWriter, r *http.Request) {
 	session, id, ok := h.requireMutationForm(w, r)
 	if !ok {
@@ -175,93 +161,5 @@ func (h *DatabaseHandler) Execute(w http.ResponseWriter, r *http.Request) {
 	)
 	defer cancel()
 	view, err := h.service.Execute(ctx, session.User, id, r.PostForm.Get("sql"))
-	h.renderViewOrError(w, session, view, err)
-}
-
-// PreviewMigration handles POST /databases/{id}/migrations/preview.
-func (h *DatabaseHandler) PreviewMigration(w http.ResponseWriter, r *http.Request) {
-	session, id, ok := h.requireMutationForm(w, r)
-	if !ok {
-		return
-	}
-	var version int64
-	if raw := r.PostForm.Get("version"); raw != "" {
-		v, err := positiveID(raw)
-		if err != nil {
-			http.Error(w, "invalid migration version", http.StatusBadRequest)
-			return
-		}
-		version = v
-	}
-	ctx, cancel := context.WithTimeout(
-		observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""),
-		databaseRequestTimeout,
-	)
-	defer cancel()
-	view, err := h.service.PreviewMigration(ctx, session.User, id, version, r.PostForm.Get("title"), r.PostForm.Get("migration_sql"))
-	h.renderViewOrError(w, session, view, err)
-}
-
-// CreateMigration handles POST /databases/{id}/migrations.
-func (h *DatabaseHandler) CreateMigration(w http.ResponseWriter, r *http.Request) {
-	session, id, ok := h.requireMutationForm(w, r)
-	if !ok {
-		return
-	}
-	ctx, cancel := context.WithTimeout(
-		observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""),
-		databaseRequestTimeout,
-	)
-	defer cancel()
-	view, err := h.service.CreateMigration(ctx, session.User, id, r.PostForm.Get("title"), r.PostForm.Get("migration_sql"))
-	if h.redirectMigration(w, r, view, err) {
-		return
-	}
-	h.renderViewOrError(w, session, view, err)
-}
-
-// UpdateMigration handles POST /databases/{id}/migrations/{version}/update.
-func (h *DatabaseHandler) UpdateMigration(w http.ResponseWriter, r *http.Request) {
-	session, id, ok := h.requireMutationForm(w, r)
-	if !ok {
-		return
-	}
-	version, err := positiveID(r.PathValue("version"))
-	if err != nil {
-		http.Error(w, "invalid migration version", http.StatusBadRequest)
-		return
-	}
-	ctx, cancel := context.WithTimeout(
-		observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""),
-		databaseRequestTimeout,
-	)
-	defer cancel()
-	view, err := h.service.UpdateMigration(ctx, session.User, id, version, r.PostForm.Get("title"), r.PostForm.Get("migration_sql"))
-	if h.redirectMigration(w, r, view, err) {
-		return
-	}
-	h.renderViewOrError(w, session, view, err)
-}
-
-// ExecuteMigration handles POST /databases/{id}/migrations/{version}/execute.
-func (h *DatabaseHandler) ExecuteMigration(w http.ResponseWriter, r *http.Request) {
-	session, id, ok := h.requireMutationForm(w, r)
-	if !ok {
-		return
-	}
-	version, err := positiveID(r.PathValue("version"))
-	if err != nil {
-		http.Error(w, "invalid migration version", http.StatusBadRequest)
-		return
-	}
-	ctx, cancel := context.WithTimeout(
-		observability.WithDatabase(observability.WithActor(r.Context(), session.User.ID, session.User.Username), id, ""),
-		databaseRequestTimeout,
-	)
-	defer cancel()
-	view, err := h.service.ExecuteMigration(ctx, session.User, id, version)
-	if h.redirectMigration(w, r, view, err) {
-		return
-	}
 	h.renderViewOrError(w, session, view, err)
 }

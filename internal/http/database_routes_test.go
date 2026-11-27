@@ -316,32 +316,21 @@ func TestExplainRouteRejectsCSRFAndMutation(t *testing.T) {
 	}
 }
 
-func TestMigrationRoutesPermissionsAndFlow(t *testing.T) {
+func TestLegacySynchronousMigrationRoutesAreGone(t *testing.T) {
 	router, store := newTestRouter(t, activeSession())
-	migForm := url.Values{"title": {"create items"}, "migration_sql": {"CREATE TABLE items (id int); INSERT INTO items VALUES (1);"}, "csrf_token": {testCSRF}}
-
-	// VIEW_ONLY user on database 2 cannot create a migration
-	if rec := do(router, http.MethodPost, "/databases/2/migrations", migForm, true); rec.Code != http.StatusForbidden {
-		t.Fatalf("VIEW_ONLY create migration status = %d, want 403", rec.Code)
+	form := url.Values{"title": {"create items"}, "migration_sql": {"CREATE TABLE items (id int)"}, "csrf_token": {testCSRF}}
+	for _, path := range []string{
+		"/databases/1/migrations",
+		"/databases/1/migrations/preview",
+		"/databases/1/migrations/1/update",
+		"/databases/1/migrations/1/execute",
+	} {
+		rec := do(router, http.MethodPost, path, form, true)
+		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("POST %s status = %d, want 404 or 405", path, rec.Code)
+		}
 	}
-
-	// VIEW_EDIT user on database 1 can preview, create, update, and execute a migration
-	prev := do(router, http.MethodPost, "/databases/1/migrations/preview", migForm, true)
-	if prev.Code != http.StatusOK || !strings.Contains(prev.Body.String(), "Preview Operasi SQL") {
-		t.Fatalf("preview status = %d", prev.Code)
-	}
-	create := do(router, http.MethodPost, "/databases/1/migrations", migForm, true)
-	if create.Code != http.StatusSeeOther || create.Header().Get("Location") != "/databases/1?migration=1" || len(store.migrations) != 1 {
-		t.Fatalf("create status = %d, migrations = %+v", create.Code, store.migrations)
-	}
-	exec := do(router, http.MethodPost, "/databases/1/migrations/1/execute", url.Values{"csrf_token": {testCSRF}}, true)
-	if exec.Code != http.StatusSeeOther || exec.Header().Get("Location") != "/databases/1?migration=1" || len(store.ran) != 1 {
-		t.Fatalf("execute status = %d, ran = %v", exec.Code, store.ran)
-	}
-
-	// VIEW_ONLY user can view migration detail when granted access
-	detail := do(router, http.MethodGet, "/databases/2?migration=1", nil, true)
-	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), "CREATE TABLE items") {
-		t.Fatalf("VIEW_ONLY migration detail status = %d", detail.Code)
+	if len(store.ran) != 0 || len(store.migrations) != 0 {
+		t.Fatalf("legacy routes touched the store: ran=%v migrations=%+v", store.ran, store.migrations)
 	}
 }

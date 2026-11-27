@@ -156,10 +156,6 @@ func NewApplicationRouterWithSPA(
 		}
 		mux.HandleFunc("POST /databases/{id}/query", databaseHandler.Execute)
 		mux.HandleFunc("POST /databases/{id}/explain", databaseHandler.Explain)
-		mux.HandleFunc("POST /databases/{id}/migrations/preview", databaseHandler.PreviewMigration)
-		mux.HandleFunc("POST /databases/{id}/migrations", databaseHandler.CreateMigration)
-		mux.HandleFunc("POST /databases/{id}/migrations/{version}/update", databaseHandler.UpdateMigration)
-		mux.HandleFunc("POST /databases/{id}/migrations/{version}/execute", databaseHandler.ExecuteMigration)
 	}
 	if static != nil {
 		mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))

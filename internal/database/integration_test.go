@@ -799,74 +799,15 @@ func TestExplorerEndToEndPostgres(t *testing.T) {
 	if secondPage.Code != http.StatusOK || !strings.Contains(secondPage.Body.String(), "row-51") || !strings.Contains(secondPage.Body.String(), "Sebelumnya") {
 		t.Fatalf("second viewer page status=%d body=%q", secondPage.Code, secondPage.Body.String())
 	}
-	createForm := url.Values{"title": {"add note"}, "migration_sql": {"ALTER TABLE " + qualified + " ADD COLUMN note text; UPDATE " + qualified + " SET note = 'ok' WHERE id = 1"}, "csrf_token": {session.CSRFToken}}
-	created := request(http.MethodPost, path+"/migrations", identifier, createForm)
-	if created.Code != http.StatusSeeOther || created.Header().Get("Location") != path+"?migration=1" {
-		t.Fatalf("create migration status=%d location=%q", created.Code, created.Header().Get("Location"))
+	legacyForm := url.Values{"title": {"add note"}, "migration_sql": {"ALTER TABLE " + qualified + " ADD COLUMN note text"}, "csrf_token": {session.CSRFToken}}
+	for _, legacy := range []string{path + "/migrations", path + "/migrations/preview", path + "/migrations/1/update", path + "/migrations/1/execute"} {
+		if got := request(http.MethodPost, legacy, identifier, legacyForm).Code; got != http.StatusNotFound && got != http.StatusMethodNotAllowed {
+			t.Fatalf("legacy synchronous migration route %s status=%d, want 404 or 405", legacy, got)
+		}
 	}
-	executed := request(http.MethodPost, path+"/migrations/1/execute", identifier, url.Values{"csrf_token": {session.CSRFToken}})
-	if executed.Code != http.StatusSeeOther || executed.Header().Get("Location") != path+"?migration=1" {
-		t.Fatalf("execute migration status=%d body=%q", executed.Code, executed.Body.String())
-	}
-	var note string
-	if err := target.QueryRow(ctx, `SELECT note FROM `+qualified+` WHERE id = 1`).Scan(&note); err != nil || note != "ok" {
-		t.Fatalf("target migration effect=%q err=%v", note, err)
-	}
-	var ledgerVersion int64
-	if err := target.QueryRow(ctx, `SELECT version FROM public._dbmp_migrations`).Scan(&ledgerVersion); err != nil || ledgerVersion != 1 {
-		t.Fatalf("target ledger version=%d err=%v", ledgerVersion, err)
-	}
-	failedTable := pgx.Identifier{schema, "rolled_back"}.Sanitize()
-	failedForm := url.Values{"title": {"fail after DDL"}, "migration_sql": {"CREATE TABLE " + failedTable + " (id integer); SELECT 1/0"}, "csrf_token": {session.CSRFToken}}
-	if got := request(http.MethodPost, path+"/migrations", identifier, failedForm).Code; got != http.StatusSeeOther {
-		t.Fatalf("create failing migration status=%d", got)
-	}
-	failed := request(http.MethodPost, path+"/migrations/2/execute", identifier, url.Values{"csrf_token": {session.CSRFToken}})
-	if failed.Code != http.StatusOK || !strings.Contains(failed.Body.String(), "division by zero") {
-		t.Fatalf("failed migration status=%d body=%q", failed.Code, failed.Body.String())
-	}
-	var rolledBack bool
-	if err := target.QueryRow(ctx, `SELECT to_regclass($1) IS NULL`, schema+".rolled_back").Scan(&rolledBack); err != nil || !rolledBack {
-		t.Fatalf("failed SQL was not rolled back: missing=%v err=%v", rolledBack, err)
-	}
-	var ledgerCount int
-	if err := target.QueryRow(ctx, `SELECT count(*) FROM public._dbmp_migrations`).Scan(&ledgerCount); err != nil || ledgerCount != 1 {
-		t.Fatalf("failed migration changed ledger: count=%d err=%v", ledgerCount, err)
-	}
-	var successfulAttempts, failedAttempts int
-	if err := platform.QueryRowContext(ctx, `SELECT count(*) FILTER (WHERE status = 'SUCCESS'), count(*) FILTER (WHERE status = 'FAILED') FROM migration_attempts WHERE database_id = $1`, connection.ID).
-		Scan(&successfulAttempts, &failedAttempts); err != nil || successfulAttempts != 1 || failedAttempts != 1 {
-		t.Fatalf("attempt audit success=%d failed=%d err=%v", successfulAttempts, failedAttempts, err)
-	}
-	retry, err := store.UpdateMigration(ctx, explorer.MigrationInput{
-		DatabaseID: connection.ID, Version: 2, Title: "retry after rollback", SQL: "CREATE TABLE " + failedTable + " (id integer)",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	abandonedAttempt, err := store.BeginMigrationAttempt(ctx, retry, viewer.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manualTarget, err := store.OpenTarget(ctx, connection.ID, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	versioned := manualTarget.(explorer.VersionedTarget)
-	manualResults, already, err := versioned.ApplyVersionedMigration(ctx, retry, viewer.ID, 10)
-	_ = manualTarget.Close(ctx)
-	if err != nil || already || len(manualResults) == 0 || manualResults[0].Error != "" {
-		t.Fatalf("simulate target commit before platform audit: results=%+v already=%v err=%v", manualResults, already, err)
-	}
-	if _, err := platform.ExecContext(ctx, `UPDATE migration_attempts SET started_at = now() - interval '31 seconds' WHERE id = $1`, abandonedAttempt); err != nil {
-		t.Fatal(err)
-	}
-	recovered := request(http.MethodPost, path+"/migrations/2/execute", identifier, url.Values{"csrf_token": {session.CSRFToken}})
-	if recovered.Code != http.StatusSeeOther {
-		t.Fatalf("reconcile committed target status=%d body=%q", recovered.Code, recovered.Body.String())
-	}
-	if err := target.QueryRow(ctx, `SELECT count(*) FROM public._dbmp_migrations`).Scan(&ledgerCount); err != nil || ledgerCount != 2 {
-		t.Fatalf("reconciliation duplicated target SQL: ledger count=%d err=%v", ledgerCount, err)
+	var noteColumn bool
+	if err := target.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'items' AND column_name = 'note')`, schema).Scan(&noteColumn); err != nil || noteColumn {
+		t.Fatalf("legacy route changed the target: note column=%v err=%v", noteColumn, err)
 	}
 	if err := adminService.GrantAccess(ctx, adminUser, group.ID, connection.ID, authorization.AccessViewOnly); err != nil {
 		t.Fatal(err)
@@ -878,10 +819,6 @@ func TestExplorerEndToEndPostgres(t *testing.T) {
 	session, err = auth.Validate(ctx, identifier)
 	if err != nil {
 		t.Fatal(err)
-	}
-	failedForm.Set("csrf_token", session.CSRFToken)
-	if got := request(http.MethodPost, path+"/migrations", identifier, failedForm).Code; got != http.StatusForbidden {
-		t.Fatalf("VIEW_ONLY created migration: status=%d", got)
 	}
 	planForm := url.Values{
 		"plan_sql":   {"SELECT * FROM " + qualified + " WHERE id = 1"},
