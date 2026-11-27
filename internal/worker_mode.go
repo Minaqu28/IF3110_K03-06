@@ -18,6 +18,7 @@ import (
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/database"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
+	"github.com/Minaqu28/IF3110_K03-06/internal/metrics"
 	"github.com/Minaqu28/IF3110_K03-06/internal/migrationengine"
 	"github.com/Minaqu28/IF3110_K03-06/internal/queue"
 	"github.com/Minaqu28/IF3110_K03-06/internal/worker"
@@ -87,7 +88,7 @@ func workerID() string {
 	return fmt.Sprintf("%s:%d:%s", host, os.Getpid(), hex.EncodeToString(suffix))
 }
 
-func runWorker(db *sql.DB, adminStore *database.AdminPostgresStore, adminService *admin.AdminService) error {
+func runWorker(db *sql.DB, adminStore *database.AdminPostgresStore, adminService *admin.AdminService, recorder *metrics.MigrationRecorder) error {
 	cfg, err := workerConfigFromEnv()
 	if err != nil {
 		return err
@@ -124,7 +125,7 @@ func runWorker(db *sql.DB, adminStore *database.AdminPostgresStore, adminService
 		Executor:   engine,
 		Locks:      database.NewLockPostgresStore(db, cfg.lockLease),
 		Fence:      func(owner string, token int64) worker.JobStore { return jobs.Fenced(owner, token) },
-	}, workerID(), log)
+	}, workerID(), log).WithRecorder(recorder)
 
 	var background sync.WaitGroup
 	background.Add(2)

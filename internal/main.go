@@ -21,6 +21,7 @@ import (
 	"github.com/Minaqu28/IF3110_K03-06/internal/database"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 	"github.com/Minaqu28/IF3110_K03-06/internal/explorer"
+	"github.com/Minaqu28/IF3110_K03-06/internal/metrics"
 	httpserver "github.com/Minaqu28/IF3110_K03-06/internal/http"
 	"github.com/Minaqu28/IF3110_K03-06/internal/migration"
 	"github.com/Minaqu28/IF3110_K03-06/internal/migrationengine"
@@ -75,6 +76,18 @@ func run() error {
 		defer shutCancel()
 		_ = shutdownTracing(shutCtx)
 	}()
+	logExport, shutdownLogs, err := observability.InitLogExport(ctx, serviceName, os.Getenv("OTEL_LOGS_EXPORTER"))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutCancel()
+		_ = shutdownLogs(shutCtx)
+	}()
+	if logExport != nil {
+		slog.SetDefault(observability.NewLogger(os.Stdout, slog.LevelInfo, logExport))
+	}
 
 	db, err := database.Open(ctx, dsn)
 	if err != nil {
@@ -84,13 +97,26 @@ func run() error {
 	if err := database.Migrate(ctx, db, migration.Files); err != nil {
 		return err
 	}
+	reg := metrics.NewRegistry()
+	if err := reg.RegisterDBPool(db, "platform"); err != nil {
+		return err
+	}
+	recorder, err := metrics.NewMigrationRecorder(reg)
+	if err != nil {
+		return err
+	}
+	stopMetrics := startMetricsServer(reg)
+	defer stopMetrics()
 	if *mode == "worker" {
 		adminStore, err := database.NewAdminPostgresStore(db, os.Getenv("DB_CREDENTIAL_KEY"))
 		if err != nil {
 			return err
 		}
 		cancel()
-		return runWorker(db, adminStore, admin.NewService(adminStore, nil))
+		return runWorker(db, adminStore, admin.NewService(adminStore, nil), recorder)
+	}
+	if err := reg.Register(metrics.NewJobStatusCollector(database.JobStatusCounts(db))); err != nil {
+		return err
 	}
 	if err := database.BootstrapAdmin(ctx, db, os.Getenv("BOOTSTRAP_ADMIN_USERNAME"), os.Getenv("BOOTSTRAP_ADMIN_PASSWORD")); err != nil {
 		return err
@@ -152,7 +178,7 @@ func run() error {
 			Executor:   engine,
 			Locks:      database.NewLockPostgresStore(db, 30*time.Second),
 			Fence:      func(owner string, token int64) worker.JobStore { return jobStore.Fenced(owner, token) },
-		}, workerID(), slog.Default())
+		}, workerID(), slog.Default()).WithRecorder(recorder)
 		go worker.RunSweeper(workerCtx, jobStore, 0, slog.Default())
 		go func() {
 			if err := embeddedWorker.Run(workerCtx, 2); err != nil && workerCtx.Err() == nil {
