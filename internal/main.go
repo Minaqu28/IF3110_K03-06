@@ -21,13 +21,15 @@ import (
 	"github.com/Minaqu28/IF3110_K03-06/internal/database"
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
 	"github.com/Minaqu28/IF3110_K03-06/internal/explorer"
-	"github.com/Minaqu28/IF3110_K03-06/internal/metrics"
 	httpserver "github.com/Minaqu28/IF3110_K03-06/internal/http"
+	"github.com/Minaqu28/IF3110_K03-06/internal/metrics"
 	"github.com/Minaqu28/IF3110_K03-06/internal/migration"
 	"github.com/Minaqu28/IF3110_K03-06/internal/migrationengine"
 	"github.com/Minaqu28/IF3110_K03-06/internal/observability"
+	"github.com/Minaqu28/IF3110_K03-06/internal/queue"
 	"github.com/Minaqu28/IF3110_K03-06/internal/worker"
 	"github.com/Minaqu28/IF3110_K03-06/internal/workflow"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func main() {
@@ -226,4 +228,51 @@ func run() error {
 		return err
 	}
 	return nil
+}
+
+var _ worker.Recorder = (*metrics.MigrationRecorder)(nil)
+
+const defaultMetricsAddr = ":9090"
+
+func startMetricsServer(reg *metrics.Registry) func() {
+	addr := envOr("METRICS_ADDR", defaultMetricsAddr)
+	if addr == "off" {
+		return func() {}
+	}
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", reg.Handler())
+	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		slog.Info("metrics listening", slog.String("event", "metrics.start"), slog.String("addr", addr), slog.String("status", "ok"))
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("metrics server failed", slog.String("event", "metrics.fatal"), slog.String("status", "error"), slog.String("error", err.Error()))
+		}
+	}()
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}
+}
+
+func initWebQueue() (workflow.JobPublisher, worker.JobConsumer, func(), error) {
+	amqpURL := strings.TrimSpace(os.Getenv("AMQP_URL"))
+	if amqpURL == "" {
+		mem := queue.NewMemory()
+		return mem, mem, func() {}, nil
+	}
+	conn, err := amqp.DialConfig(amqpURL, amqp.Config{Dial: amqp.DefaultDial(brokerDialTimeout)})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("connect to the message broker: %w", err)
+	}
+	publisher, err := queue.NewRabbitPublisher(conn, envOr("AMQP_QUEUE", defaultJobQueue))
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, nil, err
+	}
+	cleanup := func() {
+		_ = publisher.Close()
+		_ = conn.Close()
+	}
+	return publisher, nil, cleanup, nil
 }

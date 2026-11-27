@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/admin"
 	"github.com/Minaqu28/IF3110_K03-06/internal/authentication"
@@ -573,4 +574,18 @@ func (h *DatabaseHandler) apiExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonData(w, 200, map[string]any{"mode": view.PlanMode, "plan": view.Plan, "error": view.Error})
+}
+
+func writeJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+func publicMessage(err, kind error) string {
+	message := err.Error()
+	if rest, ok := strings.CutPrefix(message, kind.Error()+": "); ok {
+		return rest
+	}
+	return message
 }

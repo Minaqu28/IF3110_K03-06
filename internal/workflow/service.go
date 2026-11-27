@@ -214,3 +214,104 @@ func (s *JobService) GetJob(ctx context.Context, actor domain.User, jobID string
 	}
 	return job, nil
 }
+
+type JobActions struct {
+	CanResume   bool `json:"can_resume"`
+	CanRollback bool `json:"can_rollback"`
+	CanForward  bool `json:"can_forward"`
+}
+
+func AvailableActions(state SubmitState, execution domain.ExecutionRequest, canEdit bool) JobActions {
+	if !canEdit || execution.ExecutionID == "" {
+		return JobActions{}
+	}
+	actions := JobActions{CanResume: CanSubmit(state, execution) == nil}
+	fresh := execution
+	fresh.ExecutionID, fresh.JobID = "", ""
+	if execution.Action == domain.MigrationActionRollback {
+		forward := fresh
+		forward.Action, forward.TargetExecutionID = domain.MigrationActionForward, nil
+		actions.CanForward = CanSubmit(stateForAction(state, domain.MigrationActionForward, nil), forward) == nil
+		return actions
+	}
+	rollback := fresh
+	target := execution.ExecutionID
+	rollback.Action, rollback.TargetExecutionID = domain.MigrationActionRollback, &target
+	actions.CanRollback = CanSubmit(stateForAction(state, domain.MigrationActionRollback, &target), rollback) == nil
+	return actions
+}
+
+func stateForAction(state SubmitState, action domain.MigrationAction, target *string) SubmitState {
+	if state.Review == nil {
+		return state
+	}
+	revCopy := *state.Review
+	revCopy.Action = action
+	revCopy.TargetExecutionID = target
+	state.Review = &revCopy
+	return state
+}
+
+type ExecutionReader interface {
+	GetExecution(ctx context.Context, executionID string) (domain.ExecutionRequest, domain.ExecutionResult, error)
+}
+
+type ActionAdvisor struct {
+	access     AccessChecker
+	executions ExecutionReader
+	states     RunStateReader
+}
+
+func NewActionAdvisor(access AccessChecker, executions ExecutionReader, states RunStateReader) *ActionAdvisor {
+	return &ActionAdvisor{access: access, executions: executions, states: states}
+}
+
+func (a *ActionAdvisor) Actions(ctx context.Context, actor domain.User, job domain.Job) (JobActions, error) {
+	_, level, err := a.access.ConnectionWithAccess(ctx, actor, job.DatabaseID)
+	if err != nil || !level.Allows(authorization.AccessViewEdit) {
+		return JobActions{}, nil
+	}
+	execution, _, err := a.executions.GetExecution(ctx, job.ExecutionID)
+	if err != nil {
+		return JobActions{}, err
+	}
+	execution.ActorID = actor.ID
+	_, state, err := a.states.LoadRunState(ctx, execution)
+	if err != nil {
+		return JobActions{}, err
+	}
+	return AvailableActions(state, execution, true), nil
+}
+
+// ApprovalStore menyimpan review request dan keputusan setiap leader wajib.
+type ApprovalStore interface {
+	// CreateReview menyimpan review baru yang terikat pada revision tertentu dan
+	// mengembalikan data lengkapnya, termasuk ID yang dibuat storage.
+	CreateReview(ctx context.Context, review domain.ReviewRequest) (domain.ReviewRequest, error)
+
+	// ListDecisions mengambil keputusan seluruh leader untuk satu review agar
+	// service dapat menentukan apakah approval sudah lengkap.
+	ListDecisions(ctx context.Context, reviewID int64) ([]domain.ApprovalDecision, error)
+
+	// SaveDecision menyimpan keputusan satu leader. Pemeriksaan apakah actor
+	// memang leader yang berhak tetap dilakukan oleh service workflow.
+	SaveDecision(ctx context.Context, decision domain.ApprovalDecision) (domain.ApprovalDecision, error)
+}
+
+// JobStore adalah sumber status job persisten untuk workflow dan polling UI.
+type JobStore interface {
+	// CreateJob menyimpan job sebelum pesan dipublish agar kegagalan publish dapat
+	// dipulihkan dan status job tetap dapat diaudit.
+	CreateJob(ctx context.Context, job domain.Job) error
+
+	// GetJob mengambil status job terbaru berdasarkan job ID untuk polling dan
+	// proses recovery.
+	GetJob(ctx context.Context, jobID string) (domain.Job, error)
+}
+
+// JobPublisher adalah batas minimal workflow menuju message queue.
+type JobPublisher interface {
+	// Publish mengirim referensi job yang sudah tersimpan. Implementasi nantinya
+	// tidak boleh memasukkan SQL, password, cookie, atau secret ke pesan.
+	Publish(ctx context.Context, message domain.MigrationJobMessage) error
+}

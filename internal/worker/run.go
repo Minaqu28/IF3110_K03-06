@@ -3,7 +3,9 @@ package worker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
+	"time"
 )
 
 func (w *Worker) Run(ctx context.Context, slots int) error {
@@ -36,5 +38,36 @@ func (w *Worker) Run(ctx context.Context, slots int) error {
 			defer func() { <-free }()
 			w.handle(ctx, d)
 		}()
+	}
+}
+
+const DefaultSweepInterval = 10 * time.Second
+
+type ExpiredJobSweeper interface {
+	SweepExpiredJobs(ctx context.Context) (int, error)
+}
+
+func RunSweeper(ctx context.Context, sweeper ExpiredJobSweeper, every time.Duration, log *slog.Logger) {
+	if every <= 0 {
+		every = DefaultSweepInterval
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		swept, err := sweeper.SweepExpiredJobs(ctx)
+		switch {
+		case err != nil && ctx.Err() == nil:
+			log.Error("sweeping expired jobs failed", "error", err)
+		case swept > 0:
+			log.Warn("jobs whose worker stopped were marked for reconciliation", "jobs", swept)
+		}
 	}
 }

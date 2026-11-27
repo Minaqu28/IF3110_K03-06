@@ -1,6 +1,8 @@
 package domain
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestJobStatusTerminal(t *testing.T) {
 	cases := map[JobStatus]bool{

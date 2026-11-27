@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Minaqu28/IF3110_K03-06/internal/domain"
@@ -226,4 +230,96 @@ func (e *Engine) finish(result domain.ExecutionResult, req domain.ExecutionReque
 	result.ExecutionID, result.RevertsExecutionID = req.ExecutionID, req.TargetExecutionID
 	result.StartedAt, result.FinishedAt = started, &finished
 	return result
+}
+
+// RevisionStore menyediakan definisi migration immutable yang dibutuhkan engine.
+type RevisionStore interface {
+	// GetRevision mengambil satu revision pada database target. Implementasi harus
+	// mengembalikan revision persis seperti yang tersimpan tanpa mengubah SQL-nya.
+	GetRevision(ctx context.Context, databaseID, revisionID int64) (domain.MigrationRevision, error)
+
+	// ListRevisions mengambil seluruh revision milik satu database untuk daftar
+	// migration dan pemeriksaan urutan versi.
+	ListRevisions(ctx context.Context, databaseID int64) ([]domain.MigrationRevision, error)
+}
+
+// HistoryStore menyimpan riwayat setiap percobaan eksekusi, termasuk kegagalan.
+type HistoryStore interface {
+	// AppendAttempt menambahkan satu catatan attempt baru. Implementasi tidak boleh
+	// menimpa atau menghapus attempt lama karena history bersifat append-only.
+	AppendAttempt(ctx context.Context, attempt domain.ExecutionAttempt) error
+
+	// ListAttempts mengambil riwayat attempt pada satu database untuk ditampilkan
+	// dan diproses oleh aturan Hide Rollback.
+	ListAttempts(ctx context.Context, databaseID int64) ([]domain.ExecutionAttempt, error)
+}
+
+// TargetExecutor adalah batas antara engine dan PostgreSQL target.
+type TargetExecutor interface {
+	// Execute menjalankan revision yang telah dipilih sesuai action pada request.
+	// Implementasi menangani transaction, ledger, checkpoint, dan idempotency,
+	// lalu mengembalikan hasil tanpa mengurus HTTP, approval, atau queue.
+	Execute(ctx context.Context, request domain.ExecutionRequest, revision domain.MigrationRevision) (domain.ExecutionResult, error)
+}
+
+type ProgressSink func(ctx context.Context, executionID string, progress domain.BatchProgress) error
+
+func (s ProgressSink) Report(ctx context.Context, executionID string, progress domain.BatchProgress) error {
+	if s == nil {
+		return nil
+	}
+	return s(ctx, executionID, progress)
+}
+
+type ErrorClass int
+
+const (
+	ErrorPermanent ErrorClass = iota
+	ErrorTransient
+	ErrorUncertain
+)
+
+var (
+	ErrCommitUncertain = errors.New("the commit outcome is unknown")
+	ErrTargetBusy      = errors.New("another migration is running on the target database")
+)
+
+var transientSQLStates = map[string]bool{
+	"40001": true,
+	"40P01": true,
+	"55P03": true,
+	"57P01": true,
+	"57P02": true,
+	"57P03": true,
+	"53300": true,
+}
+
+func ClassifySQLState(code string) ErrorClass {
+	if transientSQLStates[code] || (len(code) == 5 && strings.HasPrefix(code, "08")) {
+		return ErrorTransient
+	}
+	return ErrorPermanent
+}
+
+func ClassifyError(err error) ErrorClass {
+	if err == nil {
+		return ErrorPermanent
+	}
+	if errors.Is(err, ErrCommitUncertain) {
+		return ErrorUncertain
+	}
+	var coded interface{ SQLState() string }
+	if errors.As(err, &coded) {
+		return ClassifySQLState(coded.SQLState())
+	}
+	if errors.Is(err, ErrTargetBusy) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+		return ErrorTransient
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return ErrorTransient
+	}
+	return ErrorPermanent
 }
